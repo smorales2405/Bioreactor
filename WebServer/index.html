@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Control ESP32</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div id="main-menu" class="view active">
+            <h1>Sistema de Control ESP32</h1>
+            <div class="menu-grid">
+                <div class="menu-card" onclick="showView('sensors')">
+                    <div class="menu-icon">ðŸŒ¡ï¸</div>
+                    <h2>Sensores</h2>
+                    <p>Monitoreo en tiempo real</p>
+                </div>
+                <div class="menu-card" onclick="showView('leds')">
+                    <div class="menu-icon">ðŸ’¡</div>
+                    <h2>Control LED</h2>
+                    <p>Control y secuencias</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="sensors" class="view">
+            <div class="header">
+                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
+                <h1>Monitoreo de Sensores</h1>
+            </div>
+            
+            <div class="sensors-grid">
+                <div class="sensor-card">
+                    <h2>Temperatura</h2>
+                    <div class="sensor-value">
+                        <span id="temp-value">--</span>
+                        <span class="unit">Â°C</span>
+                    </div>
+                    <div class="sensor-gauge">
+                        <div class="gauge-fill" id="temp-gauge"></div>
+                    </div>
+                    <div class="sensor-range">
+                        <span>0Â°C</span>
+                        <span>50Â°C</span>
+                    </div>
+                </div>
+
+                <div class="sensor-card">
+                    <h2>pH</h2>
+                    <div class="sensor-value">
+                        <span id="ph-value">--</span>
+                    </div>
+                    <div class="sensor-gauge ph-gauge">
+                        <div class="gauge-fill" id="ph-gauge"></div>
+                    </div>
+                    <div class="sensor-range">
+                        <span>0</span>
+                        <span>14</span>
+                    </div>
+                    <div class="ph-scale">
+                        <div class="ph-acid">Ãcido</div>
+                        <div class="ph-neutral">Neutro</div>
+                        <div class="ph-base">Base</div>
+                    </div>
+                </div>
+
+                <div class="sensor-card">
+                    <h2>Turbidez</h2>
+                    <div class="sensor-value">
+                        <span id="turbidity-value">--</span>
+                        <span class="unit">NTU</span>
+                    </div>
+                    <div class="sensor-gauge">
+                        <div class="gauge-fill" id="turbidity-gauge"></div>
+                    </div>
+                    <div class="sensor-range">
+                        <span>0</span>
+                        <span>3000</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="sensor-chart"></canvas>
+            </div>
+        </div>
+
+        <div id="leds" class="view">
+            <div class="header">
+                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
+                <h1>Control de Tiras LED</h1>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('control')">Control Manual</button>
+                <button class="tab" onclick="showTab('sequences')">Secuencias</button>
+            </div>
+
+            <div id="tab-control" class="tab-content active">
+                <div class="led-grid">
+                    <div class="led-card" id="led-blanco">
+                        <h2>LED Blanco</h2>
+                        <div class="status-indicator" id="status-blanco"></div>
+                        <p class="status-text" id="text-blanco">Apagado</p>
+                        <div class="intensity-display">
+                            <span>Intensidad: </span>
+                            <span id="intensity-blanco">0%</span>
+                        </div>
+                        <button class="btn btn-on" onclick="toggleLED('blanco', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="toggleLED('blanco', 'off')">Apagar</button>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="0" 
+                                   class="slider" id="slider-blanco" 
+                                   oninput="updateIntensity('blanco', this.value)">
+                        </div>
+                    </div>
+
+                    <div class="led-card" id="led-rojo">
+                        <h2>LED Rojo</h2>
+                        <div class="status-indicator" id="status-rojo"></div>
+                        <p class="status-text" id="text-rojo">Apagado</p>
+                        <div class="intensity-display">
+                            <span>Intensidad: </span>
+                            <span id="intensity-rojo">0%</span>
+                        </div>
+                        <button class="btn btn-on" onclick="toggleLED('rojo', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="toggleLED('rojo', 'off')">Apagar</button>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="0" 
+                                   class="slider" id="slider-rojo" 
+                                   oninput="updateIntensity('rojo', this.value)">
+                        </div>
+                    </div>
+
+                    <div class="led-card" id="led-verde">
+                        <h2>LED Verde</h2>
+                        <div class="status-indicator" id="status-verde"></div>
+                        <p class="status-text" id="text-verde">Apagado</p>
+                        <div class="intensity-display">
+                            <span>Intensidad: </span>
+                            <span id="intensity-verde">0%</span>
+                        </div>
+                        <button class="btn btn-on" onclick="toggleLED('verde', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="toggleLED('verde', 'off')">Apagar</button>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="0" 
+                                   class="slider" id="slider-verde" 
+                                   oninput="updateIntensity('verde', this.value)">
+                        </div>
+                    </div>
+
+                    <div class="led-card" id="led-azul">
+                        <h2>LED Azul</h2>
+                        <div class="status-indicator" id="status-azul"></div>
+                        <p class="status-text" id="text-azul">Apagado</p>
+                        <div class="intensity-display">
+                            <span>Intensidad: </span>
+                            <span id="intensity-azul">0%</span>
+                        </div>
+                        <button class="btn btn-on" onclick="toggleLED('azul', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="toggleLED('azul', 'off')">Apagar</button>
+                        <div class="slider-container">
+                            <input type="range" min="0" max="100" value="0" 
+                                   class="slider" id="slider-azul" 
+                                   oninput="updateIntensity('azul', this.value)">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="master-controls">
+                    <h3>Controles Maestros</h3>
+                    <button class="btn btn-master" onclick="allLEDs('on')">Encender Todos</button>
+                    <button class="btn btn-master" onclick="allLEDs('off')">Apagar Todos</button>
+                </div>
+            </div>
+
+            <div id="tab-sequences" class="tab-content">
+                <div class="sequence-status" id="sequence-status" style="display:none;">
+                    <h3>Secuencia en EjecuciÃ³n</h3>
+                    <p>Secuencia <span id="running-seq-id">-</span> - Paso <span id="running-step">-</span>/<span id="total-steps">-</span></p>
+                    <p>Tiempo: <span id="elapsed-time">-</span> / <span id="total-time">-</span></p>
+                    <button class="btn btn-off" onclick="stopSequence()">Detener Secuencia</button>
+                </div>
+
+                <div class="sequences-list">
+                    <h3>Secuencias Disponibles</h3>
+                    <div id="sequences-container"></div>
+                </div>
+
+                <div id="sequence-editor" style="display:none;">
+                    <h3>Configurar Secuencia <span id="edit-seq-id">-</span></h3>
+                    
+                    <div class="step-config">
+                        <label>NÃºmero de pasos:</label>
+                        <input type="number" id="step-count" min="1" max="10" value="1" onchange="updateStepConfig()">
+                    </div>
+
+                    <div id="steps-container"></div>
+
+                    <div class="editor-controls">
+                        <button class="btn btn-master" onclick="saveSequence()">Guardar Secuencia</button>
+                        <button class="btn btn-off" onclick="cancelEdit()">Cancelar</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
+    <script>
+        // Variables globales
+        let currentView = 'main-menu';
+        let currentTab = 'control';
+        let sensorChart = null;
+        let sensorData = {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Temperatura (Â°C)',
+                    data: [],
+                    borderColor: 'rgb(255, 99, 132)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'pH',
+                    data: [],
+                    borderColor: 'rgb(54, 162, 235)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    yAxisID: 'y1'
+                },
+                {
+                    label: 'Turbidez (NTU/100)',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    yAxisID: 'y'
+                }
+            ]
+        };
+        const maxDataPoints = 50;
+        let updateTimer = null;
+        let sequenceUpdateInterval = null;
+        let editingSequence = null;
+
+        // NavegaciÃ³n entre vistas
+        function showView(viewName) {
+            document.querySelectorAll('.view').forEach(view => {
+                view.classList.remove('active');
+            });
+            document.getElementById(viewName).classList.add('active');
+            currentView = viewName;
+
+            if (viewName === 'sensors') {
+                initSensorChart();
+                updateSensors();
+            } else if (viewName === 'leds') {
+                updateStatus();
+                loadSequences();
+            }
+        }
+
+        // NavegaciÃ³n entre tabs
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            event.target.classList.add('active');
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            currentTab = tabName;
+
+            if (tabName === 'sequences') {
+                loadSequences();
+                checkSequenceStatus();
+            }
+        }
+
+        // Inicializar grÃ¡fico de sensores
+        function initSensorChart() {
+            const ctx = document.getElementById('sensor-chart').getContext('2d');
+            
+            if (sensorChart) {
+                sensorChart.destroy();
+            }
+
+            sensorChart = new Chart(ctx, {
+                type: 'line',
+                data: sensorData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'HistÃ³rico de Sensores',
+                            color: '#ffffff'
+                        },
+                        legend: {
+                            labels: {
+                                color: '#ffffff'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            title: {
+                                display: true,
+                                text: 'Tiempo',
+                                color: '#ffffff'
+                            },
+                            ticks: {
+                                color: '#ffffff'
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Temp (Â°C) / Turb (NTU/100)',
+                                color: '#ffffff'
+                            },
+                            ticks: {
+                                color: '#ffffff'
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'pH',
+                                color: '#ffffff'
+                            },
+                            ticks: {
+                                color: '#ffffff'
+                            },
+                            grid: {
+                                drawOnChartArea: false,
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            min: 0,
+                            max: 14
+                        }
+                    }
+                }
+            });
+        }
+
+        // Actualizar sensores
+        function updateSensors() {
+            fetch('/api/sensors')
+                .then(response => response.json())
+                .then(data => {
+                    // Actualizar valores
+                    document.getElementById('temp-value').textContent = data.temperature.toFixed(1);
+                    document.getElementById('ph-value').textContent = data.ph.toFixed(2);
+                    document.getElementById('turbidity-value').textContent = data.turbidity.toFixed(0);
+
+                    // Actualizar gauges
+                    document.getElementById('temp-gauge').style.width = `${(data.temperature / 50) * 100}%`;
+                    document.getElementById('ph-gauge').style.width = `${(data.ph / 14) * 100}%`;
+                    document.getElementById('turbidity-gauge').style.width = `${(data.turbidity / 3000) * 100}%`;
+
+                    // Color del gauge de pH segÃºn el valor
+                    const phGauge = document.getElementById('ph-gauge');
+                    if (data.ph < 6.5) {
+                        phGauge.style.background = '#ff4444';
+                    } else if (data.ph > 7.5) {
+                        phGauge.style.background = '#4444ff';
+                    } else {
+                        phGauge.style.background = '#44ff44';
+                    }
+
+                    // Actualizar grÃ¡fico
+                    if (sensorChart) {
+                        const now = new Date();
+                        const timeLabel = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                        
+                        sensorData.labels.push(timeLabel);
+                        sensorData.datasets[0].data.push(data.temperature);
+                        sensorData.datasets[1].data.push(data.ph);
+                        sensorData.datasets[2].data.push(data.turbidity / 100); // Escalar para el grÃ¡fico
+
+                        // Limitar datos
+                        if (sensorData.labels.length > maxDataPoints) {
+                            sensorData.labels.shift();
+                            sensorData.datasets.forEach(dataset => dataset.data.shift());
+                        }
+
+                        sensorChart.update();
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // Control de LEDs
+        function toggleLED(color, action) {
+            fetch(`/led/${color}/${action}`)
+                .then(response => response.text())
+                .then(data => {
+                    updateLEDStatus(color, action === 'on');
+                    if(action === 'on') {
+                        document.getElementById(`slider-${color}`).value = 100;
+                        document.getElementById(`intensity-${color}`).textContent = '100%';
+                    } else {
+                        document.getElementById(`slider-${color}`).value = 0;
+                        document.getElementById(`intensity-${color}`).textContent = '0%';
+                    }
+                });
+        }
+
+        function updateIntensity(color, value) {
+            document.getElementById(`intensity-${color}`).textContent = value + '%';
+            updateLEDStatus(color, value > 0);
+            
+            if (updateTimer) {
+                clearTimeout(updateTimer);
+            }
+            
+            updateTimer = setTimeout(() => {
+                fetch(`/led/${color}/pwm/${value}`)
+                    .then(response => response.text())
+                    .then(data => {
+                        console.log(`LED ${color} set to ${value}%`);
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                    });
+            }, 100);
+        }
+
+        function updateLEDStatus(color, isOn) {
+            const statusIndicator = document.getElementById(`status-${color}`);
+            const statusText = document.getElementById(`text-${color}`);
+            
+            if (isOn) {
+                statusIndicator.classList.add('on');
+                statusText.textContent = 'Encendido';
+            } else {
+                statusIndicator.classList.remove('on');
+                statusText.textContent = 'Apagado';
+            }
+        }
+
+        function allLEDs(action) {
+            const colors = ['blanco', 'rojo', 'verde', 'azul'];
+            colors.forEach(color => toggleLED(color, action));
+        }
+
+        function updateStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    Object.keys(data).forEach(color => {
+                        const ledData = data[color];
+                        updateLEDStatus(color, ledData.state);
+                        
+                        const slider = document.getElementById(`slider-${color}`);
+                        const intensityDisplay = document.getElementById(`intensity-${color}`);
+                        
+                        if (!slider.matches(':active')) {
+                            slider.value = ledData.intensity;
+                            intensityDisplay.textContent = ledData.intensity + '%';
+                        }
+                    });
+                });
+        }
+
+        // Funciones de secuencias
+        function loadSequences() {
+            fetch('/api/sequences')
+                .then(response => response.json())
+                .then(sequences => {
+                    const container = document.getElementById('sequences-container');
+                    container.innerHTML = '';
+
+                    sequences.forEach(seq => {
+                        const seqDiv = document.createElement('div');
+                        seqDiv.className = 'sequence-item';
+                        seqDiv.innerHTML = `
+                            <div class="sequence-info">
+                                <h4>Secuencia ${seq.id + 1}</h4>
+                                <p>${seq.configured ? `${seq.steps} pasos` : 'No configurada'}</p>
+                            </div>
+                            <div class="sequence-actions">
+                                ${seq.configured ? `<button class="btn btn-on" onclick="startSequence(${seq.id})">Ejecutar</button>` : ''}
+                                <button class="btn btn-master" onclick="editSequence(${seq.id})">Configurar</button>
+                            </div>
+                        `;
+                        container.appendChild(seqDiv);
+                    });
+                });
+        }
+
+        function editSequence(id) {
+            editingSequence = id;
+            document.getElementById('edit-seq-id').textContent = id + 1;
+            document.getElementById('sequences-container').style.display = 'none';
+            document.getElementById('sequence-editor').style.display = 'block';
+
+            // Cargar datos si existe
+            fetch(`/api/sequence/${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.configured) {
+                        document.getElementById('step-count').value = data.steps.length;
+                        updateStepConfig();
+                        
+                        // Cargar valores de cada paso
+                        data.steps.forEach((step, index) => {
+                            step.colors.forEach((intensity, colorIndex) => {
+                                const colorNames = ['blanco', 'rojo', 'verde', 'azul'];
+                                const input = document.getElementById(`step-${index}-${colorNames[colorIndex]}`);
+                                if (input) input.value = intensity * 10;
+                            });
+                            document.getElementById(`step-${index}-days`).value = step.days;
+                            document.getElementById(`step-${index}-hours`).value = step.hours;
+                        });
+                    }
+                });
+        }
+
+        function updateStepConfig() {
+            const stepCount = parseInt(document.getElementById('step-count').value);
+            const container = document.getElementById('steps-container');
+            container.innerHTML = '';
+
+            for (let i = 0; i < stepCount; i++) {
+                const stepDiv = document.createElement('div');
+                stepDiv.className = 'step-item';
+                stepDiv.innerHTML = `
+                    <h4>Paso ${i + 1}</h4>
+                    <div class="step-colors">
+                        <div class="color-control">
+                            <label>Blanco:</label>
+                            <input type="range" id="step-${i}-blanco" min="0" max="100" value="0">
+                            <span class="color-value">0%</span>
+                        </div>
+                        <div class="color-control">
+                            <label>Rojo:</label>
+                            <input type="range" id="step-${i}-rojo" min="0" max="100" value="0">
+                            <span class="color-value">0%</span>
+                        </div>
+                        <div class="color-control">
+                            <label>Verde:</label>
+                            <input type="range" id="step-${i}-verde" min="0" max="100" value="0">
+                            <span class="color-value">0%</span>
+                        </div>
+                        <div class="color-control">
+                            <label>Azul:</label>
+                            <input type="range" id="step-${i}-azul" min="0" max="100" value="0">
+                            <span class="color-value">0%</span>
+                        </div>
+                    </div>
+                    <div class="step-time">
+                        <label>DÃ­as:</label>
+                        <input type="number" id="step-${i}-days" min="0" max="30" value="0">
+                        <label>Horas:</label>
+                        <input type="number" id="step-${i}-hours" min="0" max="23" value="0">
+                    </div>
+                `;
+                container.appendChild(stepDiv);
+
+                // Agregar eventos para actualizar valores mostrados
+                const colors = ['blanco', 'rojo', 'verde', 'azul'];
+                colors.forEach((color, idx) => {
+                    const slider = document.getElementById(`step-${i}-${color}`);
+                    slider.addEventListener('input', function() {
+                        this.nextElementSibling.textContent = this.value + '%';
+                    });
+                });
+            }
+        }
+
+        function saveSequence() {
+            const stepCount = parseInt(document.getElementById('step-count').value);
+            const steps = [];
+
+            for (let i = 0; i < stepCount; i++) {
+                const colors = [
+                    parseInt(document.getElementById(`step-${i}-blanco`).value) / 10,
+                    parseInt(document.getElementById(`step-${i}-rojo`).value) / 10,
+                    parseInt(document.getElementById(`step-${i}-verde`).value) / 10,
+                    parseInt(document.getElementById(`step-${i}-azul`).value) / 10
+                ];
+                const days = parseInt(document.getElementById(`step-${i}-days`).value);
+                const hours = parseInt(document.getElementById(`step-${i}-hours`).value);
+
+                steps.push({ colors, days, hours });
+            }
+
+            const sequenceData = {
+                id: editingSequence,
+                steps: steps
+            };
+
+            fetch('/api/sequence/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(sequenceData)
+            })
+            .then(response => response.text())
+            .then(data => {
+                alert('Secuencia guardada exitosamente');
+                cancelEdit();
+                loadSequences();
+            })
+            .catch(error => {
+                alert('Error al guardar la secuencia');
+                console.error('Error:', error);
+            });
+        }
+
+        function cancelEdit() {
+            document.getElementById('sequences-container').style.display = 'block';
+            document.getElementById('sequence-editor').style.display = 'none';
+            editingSequence = null;
+        }
+
+        function startSequence(id) {
+            fetch(`/api/sequence/${id}/start`, {
+                method: 'POST'
+            })
+            .then(response => response.text())
+            .then(data => {
+                alert(`Secuencia ${id + 1} iniciada`);
+                checkSequenceStatus();
+            })
+            .catch(error => {
+                alert('Error al iniciar la secuencia');
+                console.error('Error:', error);
+            });
+        }
+
+        function stopSequence() {
+            fetch('/api/sequence/stop', {
+                method: 'POST'
+            })
+            .then(response => response.text())
+            .then(data => {
+                alert('Secuencia detenida');
+                checkSequenceStatus();
+            })
+            .catch(error => {
+                alert('Error al detener la secuencia');
+                console.error('Error:', error);
+            });
+        }
+
+        function checkSequenceStatus() {
+            fetch('/api/sequence/status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('sequence-status');
+                    
+                    if (data.running) {
+                        statusDiv.style.display = 'block';
+                        document.getElementById('running-seq-id').textContent = data.sequenceId + 1;
+                        document.getElementById('running-step').textContent = data.currentStep + 1;
+                        document.getElementById('total-steps').textContent = data.totalSteps;
+                        document.getElementById('elapsed-time').textContent = `${data.elapsedDays}d ${data.elapsedHours}h`;
+                        document.getElementById('total-time').textContent = `${data.totalDays}d ${data.totalHours}h`;
+                    } else {
+                        statusDiv.style.display = 'none';
+                    }
+                });
+        }
+
+        // ActualizaciÃ³n automÃ¡tica
+        setInterval(() => {
+            if (currentView === 'sensors') {
+                updateSensors();
+            } else if (currentView === 'leds') {
+                updateStatus();
+                if (currentTab === 'sequences') {
+                    checkSequenceStatus();
+                }
+            }
+        }, 2000);
+
+        // Inicializar al cargar
+        window.onload = function() {
+            // La vista inicial ya estÃ¡ activa por CSS
+        };
+    </script>
+</body>
+</html>
