@@ -238,7 +238,69 @@
                     </div>
                 </div>
             </div>
+        </div>
 
+        <div id="llenado" class="view">
+            <div class="header">
+                <button class="btn-back" onclick="showView('main-menu')">← Volver</button>
+                <h1>Sistema de Llenado</h1>
+            </div>
+            
+            <div class="llenado-status">
+                <div class="status-card">
+                    <h3>Volumen Total</h3>
+                    <div class="volume-display">
+                        <span id="volume-total">--</span>
+                        <span class="unit">L</span>
+                    </div>
+                    <button class="btn btn-reset" onclick="resetVolume()">Reiniciar Volumen</button>
+                </div>
+                
+                <div class="status-card" id="filling-status" style="display:none;">
+                    <h3 id="filling-title">Llenado en Proceso</h3>
+                    <div class="volume-display">
+                        <span id="volume-filling">--</span>
+                        <span class="unit">L</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="filling-progress"></div>
+                    </div>
+                    <p id="filling-info">--</p>
+                    <button class="btn btn-off" onclick="stopFilling()">Detener</button>
+                </div>
+            </div>
+            
+            <div class="llenado-controls">
+                <div class="control-card">
+                    <h3>Llenado Programado</h3>
+                    <p>Ingrese la cantidad de litros a llenar</p>
+                    <div class="volume-input">
+                        <input type="number" id="target-volume" min="1" max="200" step="1" value="10">
+                        <span class="unit">L</span>
+                    </div>
+                    <input type="range" id="volume-slider" min="1" max="200" value="10" 
+                        oninput="updateVolumeInput(this.value)">
+                    <button class="btn btn-on" onclick="startProgrammedFilling()">Iniciar Llenado</button>
+                </div>
+                
+                <div class="control-card">
+                    <h3>Bomba Manual</h3>
+                    <p>Encender bomba sin límite de volumen</p>
+                    <button class="btn btn-on" onclick="startManualPump()">Encender Bomba</button>
+                </div>
+            </div>
+            
+            <div id="reset-confirm" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <h3>¿Reiniciar Volumen?</h3>
+                    <p>El contador de volumen se pondrá en 0 L</p>
+                    <div class="modal-buttons">
+                        <button class="btn btn-on" onclick="confirmReset()">Sí</button>
+                        <button class="btn btn-off" onclick="cancelReset()">No</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
@@ -295,6 +357,19 @@
             }
             else if (viewName === 'aireacion') {
                 updateAireacionStatus();
+            }
+            else if (viewName === 'llenado') {
+                updateFillingStatus();
+                // Actualizar cada segundo cuando estamos en esta vista
+                if (fillingInterval) clearInterval(fillingInterval);
+                fillingInterval = setInterval(updateFillingStatus, 1000);
+            } else {
+                // Limpiar intervalo si salimos de llenado
+                if (fillingInterval) {
+                    clearInterval(fillingInterval);
+                    fillingInterval = null;
+    
+                }
             }
         }
 
@@ -760,6 +835,112 @@
                     } else {
                         statusCO2.classList.remove('on');
                         textCO2.textContent = 'Apagado';
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // Variables para llenado
+        let fillingInterval = null;
+
+        // Control de Llenado
+        function updateVolumeInput(value) {
+            document.getElementById('target-volume').value = value;
+        }
+
+        function startProgrammedFilling() {
+            const volume = document.getElementById('target-volume').value;
+            
+            fetch('/api/llenado/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: `volume=${volume}`
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('Llenado programado iniciado');
+                updateFillingStatus();
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function startManualPump() {
+            fetch('/api/llenado/manual/start', {
+                method: 'POST'
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('Bomba manual iniciada');
+                updateFillingStatus();
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function stopFilling() {
+            fetch('/api/llenado/stop', {
+                method: 'POST'
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('Llenado detenido');
+                updateFillingStatus();
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function resetVolume() {
+            document.getElementById('reset-confirm').style.display = 'flex';
+        }
+
+        function confirmReset() {
+            fetch('/api/llenado/reset', {
+                method: 'POST'
+            })
+            .then(response => response.text())
+            .then(data => {
+                console.log('Volumen reiniciado');
+                document.getElementById('reset-confirm').style.display = 'none';
+                updateFillingStatus();
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        function cancelReset() {
+            document.getElementById('reset-confirm').style.display = 'none';
+        }
+
+        function updateFillingStatus() {
+            fetch('/api/llenado/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Actualizar volumen total
+                    document.getElementById('volume-total').textContent = data.volumeTotal.toFixed(1);
+                    
+                    // Mostrar/ocultar estado de llenado
+                    const fillingStatus = document.getElementById('filling-status');
+                    
+                    if (data.fillingActive) {
+                        fillingStatus.style.display = 'block';
+                        document.getElementById('volume-filling').textContent = data.volumeLlenado.toFixed(1);
+                        
+                        if (data.isManualMode) {
+                            document.getElementById('filling-title').textContent = 'Bomba Manual Activa';
+                            document.getElementById('filling-info').textContent = 'Sin límite de volumen';
+                            document.querySelector('.progress-bar').style.display = 'none';
+                        } else {
+                            document.getElementById('filling-title').textContent = 'Llenado en Proceso';
+                            document.getElementById('filling-info').textContent = 
+                                `Objetivo: ${data.targetVolume} L`;
+                            document.querySelector('.progress-bar').style.display = 'block';
+                            
+                            const progress = (data.volumeLlenado / data.targetVolume) * 100;
+                            document.getElementById('filling-progress').style.width = 
+                                Math.min(progress, 100) + '%';
+                        }
+                    } else {
+                        fillingStatus.style.display = 'none';
                     }
                 })
                 .catch(error => console.error('Error:', error));

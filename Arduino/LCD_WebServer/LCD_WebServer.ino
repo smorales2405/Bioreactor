@@ -688,41 +688,93 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       }
     });
 
-  // Control de Aireación
-server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  aireacionActive = true;
-  pcfOutput.digitalWrite(P1, LOW);
-  request->send(200, "text/plain", "OK");
-});
+    // Control de Aireación
+  server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    aireacionActive = true;
+    pcfOutput.digitalWrite(P1, LOW);
+    request->send(200, "text/plain", "OK");
+  });
 
-server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  aireacionActive = false;
-  pcfOutput.digitalWrite(P1, HIGH);
-  request->send(200, "text/plain", "OK");
-});
+  server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    aireacionActive = false;
+    pcfOutput.digitalWrite(P1, HIGH);
+    request->send(200, "text/plain", "OK");
+  });
 
-// Control de CO2
-server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  co2Active = true;
-  pcfOutput.digitalWrite(P2, LOW);
-  request->send(200, "text/plain", "OK");
-});
+  // Control de CO2
+  server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    co2Active = true;
+    pcfOutput.digitalWrite(P2, LOW);
+    request->send(200, "text/plain", "OK");
+  });
 
-server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  co2Active = false;
-  pcfOutput.digitalWrite(P2, HIGH);
-  request->send(200, "text/plain", "OK");
-});
+  server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    co2Active = false;
+    pcfOutput.digitalWrite(P2, HIGH);
+    request->send(200, "text/plain", "OK");
+  });
 
-// Estado de aireación y CO2
-server.on("/api/aireacion/status", HTTP_GET, [](AsyncWebServerRequest *request){
-  String json = "{";
-  json += "\"aireacion\":" + String(aireacionActive ? "true" : "false") + ",";
-  json += "\"co2\":" + String(co2Active ? "true" : "false");
-  json += "}";
-  request->send(200, "application/json", json);
-});
-  
+  // Estado de aireación y CO2
+  server.on("/api/aireacion/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"aireacion\":" + String(aireacionActive ? "true" : "false") + ",";
+    json += "\"co2\":" + String(co2Active ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+    
+    // Control de Llenado
+  server.on("/api/llenado/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"volumeTotal\":" + String(volumeTotal, 1) + ",";
+    json += "\"volumeLlenado\":" + String(volumeLlenado, 1) + ",";
+    json += "\"targetVolume\":" + String(targetVolume, 0) + ",";
+    json += "\"fillingActive\":" + String(fillingActive ? "true" : "false") + ",";
+    json += "\"isManualMode\":" + String(targetVolume >= 9999 ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Reiniciar volumen
+  server.on("/api/llenado/reset", HTTP_POST, [](AsyncWebServerRequest *request){
+    volumeTotal = 0.0;
+    pulseCount = 0;
+    saveVolumeToEEPROM();
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Iniciar llenado con volumen específico
+  server.on("/api/llenado/start", HTTP_POST, [](AsyncWebServerRequest *request){
+    if(request->hasParam("volume", true)) {
+      AsyncWebParameter* p = request->getParam("volume", true);
+      float vol = p->value().toFloat();
+      if(vol > 0 && vol <= 200) {
+        targetVolume = vol;
+        startFilling();
+        request->send(200, "text/plain", "OK");
+      } else {
+        request->send(400, "text/plain", "Invalid volume");
+      }
+    } else {
+      request->send(400, "text/plain", "Missing volume parameter");
+    }
+  });
+
+  // Iniciar bomba manual
+  server.on("/api/llenado/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){
+    fillingActive = true;
+    volumeLlenado = 0.0;
+    targetVolume = 9999;
+    pcfOutput.digitalWrite(P0, HIGH);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Detener llenado/bomba
+  server.on("/api/llenado/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    stopFilling();
+    request->send(200, "text/plain", "OK");
+  });
+
   // Manejo de errores 404
   server.onNotFound([](AsyncWebServerRequest *request){
     request->send(404, "text/plain", "Not found");

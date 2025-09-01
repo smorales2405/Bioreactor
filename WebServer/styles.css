@@ -858,4 +858,168 @@ body {
             }
     }
 
+    /* Vista de Llenado */
+    .llenado-status {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 30px;
+        margin-bottom: 40px;
+    }
+
+    .status-card {
+        background: linear-gradient(145deg, #1a1a1a, #2a2a2a);
+        border-radius: 20px;
+        padding: 30px;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .volume-display {
+        font-size: 4em;
+        font-weight: bold;
+        margin: 20px 0;
+        color: #4a9eff;
+        text-shadow: 0 0 20px rgba(74, 158, 255, 0.5);
+    }
+
+    .volume-display .unit {
+        font-size: 0.5em;
+        color: #888;
+    }
+
+    .progress-bar {
+        width: 100%;
+        height: 20px;
+        background: #333;
+        border-radius: 10px;
+        overflow: hidden;
+        margin: 20px 0;
+        box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5);
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #00ff88, #4a9eff);
+        transition: width 0.5s ease;
+        box-shadow: 0 0 10px rgba(74, 158, 255, 0.5);
+    }
+
+    .llenado-controls {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 30px;
+    }
+
+    .control-card {
+        background: linear-gradient(145deg, #1a1a1a, #2a2a2a);
+        border-radius: 20px;
+        padding: 30px;
+        text-align: center;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .control-card h3 {
+        color: #4a9eff;
+        margin-bottom: 15px;
+    }
+
+    .control-card p {
+        color: #aaa;
+        margin-bottom: 20px;
+    }
+
+    .volume-input {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+
+    .volume-input input[type="number"] {
+        background: #333;
+        border: 2px solid #444;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 10px;
+        width: 100px;
+        text-align: center;
+        font-size: 1.5em;
+    }
+
+    .volume-input input[type="number"]:focus {
+        border-color: #4a9eff;
+        outline: none;
+    }
+
+    #volume-slider {
+        width: 100%;
+        margin-bottom: 20px;
+    }
+
+    .btn-reset {
+        background: linear-gradient(145deg, #ff9944, #ff6600);
+        color: white;
+    }
+
+    .btn-reset:hover {
+        background: linear-gradient(145deg, #ff6600, #ff9944);
+        box-shadow: 0 5px 20px rgba(255, 153, 68, 0.5);
+    }
+
+    /* Modal de confirmación */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        align-items: center;
+        justify-content: center;
+    }
+
+    .modal-content {
+        background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+        padding: 40px;
+        border-radius: 20px;
+        text-align: center;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8);
+        border: 2px solid #4a9eff;
+    }
+
+    .modal-content h3 {
+        color: #4a9eff;
+        margin-bottom: 20px;
+    }
+
+    .modal-content p {
+        color: #aaa;
+        margin-bottom: 30px;
+    }
+
+    .modal-buttons {
+        display: flex;
+        gap: 20px;
+        justify-content: center;
+    }
+
+    .modal-buttons .btn {
+        width: 100px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .llenado-status,
+        .llenado-controls {
+            grid-template-columns: 1fr;
+        }
+        
+        .volume-display {
+            font-size: 3em;
+        }
+    }
+
 }
