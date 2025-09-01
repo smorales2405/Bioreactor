@@ -21,6 +21,11 @@
                     <h2>Control LED</h2>
                     <p>Control y secuencias</p>
                 </div>
+                <div class="menu-card" onclick="showView('aireacion')">
+                    <div class="menu-icon">ðŸ’¨</div>
+                    <h2>AireaciÃ³n</h2>
+                    <p>Control de aire y CO2</p>
+                </div>
             </div>
         </div>
 
@@ -29,7 +34,7 @@
                 <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
                 <h1>Monitoreo de Sensores</h1>
             </div>
-            
+
             <div class="sensors-grid">
                 <div class="sensor-card">
                     <h2>Temperatura</h2>
@@ -110,8 +115,8 @@
                         <button class="btn btn-on" onclick="toggleLED('blanco', 'on')">Encender</button>
                         <button class="btn btn-off" onclick="toggleLED('blanco', 'off')">Apagar</button>
                         <div class="slider-container">
-                            <input type="range" min="0" max="100" value="0" 
-                                   class="slider" id="slider-blanco" 
+                            <input type="range" min="0" max="100" value="0"
+                                   class="slider" id="slider-blanco"
                                    oninput="updateIntensity('blanco', this.value)">
                         </div>
                     </div>
@@ -127,8 +132,8 @@
                         <button class="btn btn-on" onclick="toggleLED('rojo', 'on')">Encender</button>
                         <button class="btn btn-off" onclick="toggleLED('rojo', 'off')">Apagar</button>
                         <div class="slider-container">
-                            <input type="range" min="0" max="100" value="0" 
-                                   class="slider" id="slider-rojo" 
+                            <input type="range" min="0" max="100" value="0"
+                                   class="slider" id="slider-rojo"
                                    oninput="updateIntensity('rojo', this.value)">
                         </div>
                     </div>
@@ -144,8 +149,8 @@
                         <button class="btn btn-on" onclick="toggleLED('verde', 'on')">Encender</button>
                         <button class="btn btn-off" onclick="toggleLED('verde', 'off')">Apagar</button>
                         <div class="slider-container">
-                            <input type="range" min="0" max="100" value="0" 
-                                   class="slider" id="slider-verde" 
+                            <input type="range" min="0" max="100" value="0"
+                                   class="slider" id="slider-verde"
                                    oninput="updateIntensity('verde', this.value)">
                         </div>
                     </div>
@@ -161,8 +166,8 @@
                         <button class="btn btn-on" onclick="toggleLED('azul', 'on')">Encender</button>
                         <button class="btn btn-off" onclick="toggleLED('azul', 'off')">Apagar</button>
                         <div class="slider-container">
-                            <input type="range" min="0" max="100" value="0" 
-                                   class="slider" id="slider-azul" 
+                            <input type="range" min="0" max="100" value="0"
+                                   class="slider" id="slider-azul"
                                    oninput="updateIntensity('azul', this.value)">
                         </div>
                     </div>
@@ -190,7 +195,7 @@
 
                 <div id="sequence-editor" style="display:none;">
                     <h3>Configurar Secuencia <span id="edit-seq-id">-</span></h3>
-                    
+
                     <div class="step-config">
                         <label>NÃºmero de pasos:</label>
                         <input type="number" id="step-count" min="1" max="10" value="1" onchange="updateStepConfig()">
@@ -205,6 +210,35 @@
                 </div>
             </div>
         </div>
+
+        <div id="aireacion" class="view">
+            <div class="header">
+                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
+                <h1>Control de AireaciÃ³n</h1>
+            </div>
+
+            <div class="aireacion-grid">
+                <div class="aireacion-card">
+                    <h2>Ingreso de Aire</h2>
+                    <div class="status-indicator large" id="status-aire"></div>
+                    <p class="status-text" id="text-aire">Apagado</p>
+                    <div class="control-buttons">
+                        <button class="btn btn-on" onclick="controlAireacion('aireacion', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="controlAireacion('aireacion', 'off')">Apagar</button>
+                    </div>
+                </div>
+
+                <div class="aireacion-card">
+                    <h2>Ingreso de CO2</h2>
+                    <div class="status-indicator large" id="status-co2"></div>
+                    <p class="status-text" id="text-co2">Apagado</p>
+                    <div class="control-buttons">
+                        <button class="btn btn-on" onclick="controlAireacion('co2', 'on')">Encender</button>
+                        <button class="btn btn-off" onclick="controlAireacion('co2', 'off')">Apagar</button>
+                    </div>
+                </div>
+            </div>
+
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js"></script>
@@ -258,6 +292,9 @@
             } else if (viewName === 'leds') {
                 updateStatus();
                 loadSequences();
+            }
+            else if (viewName === 'aireacion') {
+                updateAireacionStatus();
             }
         }
 
@@ -687,6 +724,47 @@
                 });
         }
 
+        // Control de AireaciÃ³n
+        function controlAireacion(tipo, action) {
+            fetch(`/api/${tipo}/${action}`)
+                .then(response => response.text())
+                .then(data => {
+                    updateAireacionStatus();
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        function updateAireacionStatus() {
+            fetch('/api/aireacion/status')
+                .then(response => response.json())
+                .then(data => {
+                    // Actualizar aire
+                    const statusAire = document.getElementById('status-aire');
+                    const textAire = document.getElementById('text-aire');
+
+                    if (data.aireacion) {
+                        statusAire.classList.add('on');
+                        textAire.textContent = 'Encendido';
+                    } else {
+                        statusAire.classList.remove('on');
+                        textAire.textContent = 'Apagado';
+                    }
+
+                    // Actualizar CO2
+                    const statusCO2 = document.getElementById('status-co2');
+                    const textCO2 = document.getElementById('text-co2');
+
+                    if (data.co2) {
+                        statusCO2.classList.add('on');
+                        textCO2.textContent = 'Encendido';
+                    } else {
+                        statusCO2.classList.remove('on');
+                        textCO2.textContent = 'Apagado';
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
         // ActualizaciÃ³n automÃ¡tica
         setInterval(() => {
             if (currentView === 'sensors') {
@@ -696,6 +774,8 @@
                 if (currentTab === 'sequences') {
                     checkSequenceStatus();
                 }
+            } else if (currentView === 'aireacion') {
+                updateAireacionStatus();
             }
         }, 2000);
 
