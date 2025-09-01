@@ -222,7 +222,7 @@ void setup() {
   pinMode(FLOW_SENSOR_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), contarPulso, FALLING);
   pinMode(EMERGENCY_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(EMERGENCY_PIN), handleEmergency, FALLING);
+  attachInterrupt(digitalPinToInterrupt(EMERGENCY_PIN), handleEmergency, RISING);
 
   // Configurar PCF8574
   pcfInput.pinMode(P0, INPUT);
@@ -970,7 +970,7 @@ void incrementCursor() {
 
     case MENU_LLENADO:
       menuCursor++;
-      if (menuCursor > 2) menuCursor = 0; // Solo 3 opciones ahora
+      if (menuCursor > 3) menuCursor = 0; // Solo 3 opciones ahora
       break;
 
     case MENU_LLENADO_RESET_CONFIRM:
@@ -1100,7 +1100,7 @@ void decrementCursor() {
 
   case MENU_LLENADO:
     menuCursor--;
-    if (menuCursor < 0) menuCursor = 2; // Solo 3 opciones ahora
+    if (menuCursor < 0) menuCursor = 3; // Solo 3 opciones ahora
     break;
 
   case MENU_LLENADO_RESET_CONFIRM:
@@ -1439,22 +1439,35 @@ void handleSelection() {
       }
       break;
 
-    case MENU_LLENADO:
-      if (menuCursor == 0) {
-        // Pedir confirmación para reiniciar volumen
-        currentMenu = MENU_LLENADO_RESET_CONFIRM;
-        menuCursor = 1; // Por defecto en NO
-      } else if (menuCursor == 1) {
-        // Configurar llenado
-        currentMenu = MENU_LLENADO_SET_VOLUME;
-        menuCursor = 0;
-        targetVolume = 0;
+  case MENU_LLENADO:
+    if (menuCursor == 0) {
+      // Pedir confirmación para reiniciar volumen
+      currentMenu = MENU_LLENADO_RESET_CONFIRM;
+      menuCursor = 1; // Por defecto en NO
+    } else if (menuCursor == 1) {
+      // Configurar llenado
+      currentMenu = MENU_LLENADO_SET_VOLUME;
+      menuCursor = 0;
+      targetVolume = 0;
+    } else if (menuCursor == 2) {
+      // Encender/Apagar bomba manual
+      if (!fillingActive) {
+        // Encender bomba sin límite
+        fillingActive = true;
+        volumeLlenado = 0.0;
+        targetVolume = 9999; // Valor alto para que no se detenga
+        pcfOutput.digitalWrite(P0, HIGH);
+        currentMenu = MENU_LLENADO_ACTIVE;
       } else {
-        // Atrás
-        currentMenu = MENU_MAIN;
-        menuCursor = 2;
+        // Si ya está activa, ir a pantalla de control
+        currentMenu = MENU_LLENADO_ACTIVE;
       }
-      break;
+    } else {
+      // Atrás
+      currentMenu = MENU_MAIN;
+      menuCursor = 2;
+    }
+    break;
 
     case MENU_LLENADO_SET_VOLUME:
       currentMenu = MENU_LLENADO_CONFIRM;
@@ -2559,9 +2572,6 @@ void saveVolumeToEEPROM() {
 }
 
 void updateFlowMeasurement() {
-
-  if (emergencyActive) return;
-
   if (millis() - lastFlowCheck >= 500) {
     lastFlowCheck = millis();
     
@@ -2575,9 +2585,9 @@ void updateFlowMeasurement() {
       // Calcular litros llenados desde que empezó el llenado
       volumeLlenado = litrosActuales - volumeTotal;
       
-      if (volumeLlenado >= targetVolume) {
+      // Solo detener si hay un límite establecido (no en modo manual)
+      if (targetVolume < 9999 && volumeLlenado >= targetVolume) {
         stopFilling();
-        volumeTotal = litrosActuales; // Actualizar volumen total
         currentMenu = MENU_LLENADO;
         menuCursor = 0;
       }
@@ -2609,18 +2619,32 @@ void displayLlenadoMenu() {
   lcd.print(volumeTotal, 0);
   lcd.print(" L");
   
-  lcd.setCursor(0, 2);
-  lcd.print(menuCursor == 0 ? "> " : "  ");
-  lcd.print("Reiniciar Volumen");
+  // Si hay 4 o más opciones, necesitamos scroll
+  int startIndex = 0;
+  if (menuCursor > 2) {
+    startIndex = menuCursor - 2;
+    if (startIndex > 1) startIndex = 1; // Ajustar para 4 opciones
+  }
   
-  lcd.setCursor(0, 3);
-  if (menuCursor == 1) {
-    lcd.print("> Llenar Tanque");
-  } else if (menuCursor == 2) {
-    lcd.print("> Atras");
-  } else {
-    // Si cursor está en posición 0
-    lcd.print("  Llenar Tanque");
+  const char* opciones[] = {"Reiniciar Volumen", "Llenar Tanque", "Encender Bomba", "Atras"};
+  
+  for (int i = 0; i < 2; i++) { // Solo 2 líneas disponibles
+    int optionIndex = startIndex + i;
+    if (optionIndex < 4) {
+      lcd.setCursor(0, i + 2);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print(opciones[optionIndex]);
+    }
+  }
+  
+  // Indicadores de scroll si es necesario
+  if (startIndex > 0) {
+    lcd.setCursor(19, 2);
+    lcd.print("^");
+  }
+  if (startIndex < 1) {
+    lcd.setCursor(19, 3);
+    lcd.print("v");
   }
 }
 
@@ -2663,13 +2687,20 @@ void displayConfirmFilling() {
 void displayFillingActive() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("LLENANDO TANQUE");
+  
+  if (targetVolume >= 9999) {
+    lcd.print("BOMBA ACTIVA");
+  } else {
+    lcd.print("LLENANDO TANQUE");
+  }
   
   lcd.setCursor(0, 1);
   lcd.print("Llenado: ");
   lcd.print(volumeLlenado, 1);
-  lcd.print("/");
-  lcd.print(targetVolume, 0);
+  if (targetVolume < 9999) {
+    lcd.print("/");
+    lcd.print(targetVolume, 0);
+  }
   lcd.print(" L");
   
   lcd.setCursor(0, 2);
@@ -2677,14 +2708,18 @@ void displayFillingActive() {
   lcd.print(volumeTotal + volumeLlenado, 1);
   lcd.print(" L");
   
-  // Barra de progreso
   lcd.setCursor(0, 3);
-  lcd.print("[");
-  int progress = (volumeLlenado / targetVolume) * 14;
-  for(int i = 0; i < 14; i++) {
-    lcd.print(i < progress ? "=" : " ");
+  if (targetVolume >= 9999) {
+    lcd.print("Click para detener");
+  } else {
+    // Barra de progreso para modo automático
+    lcd.print("[");
+    int progress = (volumeLlenado / targetVolume) * 14;
+    for(int i = 0; i < 14; i++) {
+      lcd.print(i < progress ? "=" : " ");
+    }
+    lcd.print("]");
   }
-  lcd.print("]");
 }
 
 void displayStopConfirm() {
@@ -2827,17 +2862,17 @@ void displayCO2Menu() {
   }
 }
 
-// Agregar esta función después de las otras funciones
 void handleEmergencyState() {
-  // Verificar estado actual del pin (NC = HIGH normal, LOW cuando presionado)
-  if (digitalRead(EMERGENCY_PIN) == HIGH) {
-    if (!emergencyActive) {
-      emergencyActive = true;
-    }
+  static bool lastEmergencyState = false;
+  bool currentEmergencyState = digitalRead(EMERGENCY_PIN) == HIGH;  // HIGH = presionado
+  
+  // Detectar cuando se presiona el botón (transición de LOW a HIGH)
+  if (currentEmergencyState && !lastEmergencyState) {
+    emergencyActive = true;
     
     // Apagar todas las salidas
     for (int i = 0; i < 4; i++) {
-      pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
+      pcfOutput.digitalWrite(i, LOW);  // P0 a P3
       ledcWrite(ledPins[i], 0);        // LEDs PWM
     }
     
@@ -2845,6 +2880,11 @@ void handleEmergencyState() {
     fillingActive = false;
     aireacionActive = false;
     co2Active = false;
+    
+    // Detener secuencias si están corriendo
+    if (sequenceRunning) {
+      stopSequence();
+    }
     
     // Mostrar mensaje de emergencia
     lcd.clear();
@@ -2856,10 +2896,27 @@ void handleEmergencyState() {
     lcd.print("Todas las salidas");
     lcd.setCursor(0, 3);
     lcd.print("DESACTIVADAS");
-    
-  } else if (digitalRead(EMERGENCY_PIN) == LOW) {
-    // Botón liberado, salir del modo emergencia
-    emergencyActive = false;
-    //updateDisplay();  // Volver a la pantalla normal
   }
+  
+  // Detectar cuando se suelta el botón (transición de HIGH a LOW)
+  else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
+    emergencyActive = false;
+    
+    // Volver al menú principal
+    currentMenu = MENU_MAIN;
+    menuCursor = 0;
+    
+    // Mostrar mensaje temporal
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Emergencia");
+    lcd.setCursor(0, 2);
+    lcd.print("Desactivada");
+    delay(1500);
+    
+    updateDisplay();  // Mostrar menú principal
+  }
+  
+  // Actualizar estado anterior
+  lastEmergencyState = currentEmergencyState;
 }
