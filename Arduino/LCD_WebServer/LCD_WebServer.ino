@@ -983,7 +983,7 @@ void incrementCursor() {
       
     case MENU_SEQ_CONFIG_COLOR:
       if (currentColorConfig < 4) {
-        if (menuCursor < 10) {
+        if (menuCursor < 20) {
           menuCursor++;
           updateColorPreview();
         }
@@ -1006,9 +1006,10 @@ void incrementCursor() {
       break;
       
     case MENU_INTENSITY:
-      if (menuCursor < 10) {
+      if (menuCursor < 20) {  // Cambiar de 10 a 20 (0-100 en pasos de 5)
         menuCursor++;
-        int pwmValue = map(menuCursor, 0, 10, 0, 255);
+        int intensity = menuCursor * 5;  // Cambiar de 10 a 5
+        int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
       }
       break;
@@ -1139,7 +1140,8 @@ void decrementCursor() {
     case MENU_INTENSITY:
       if (menuCursor > 0) {
         menuCursor--;
-        int pwmValue = map(menuCursor, 0, 10, 0, 255);
+        int intensity = menuCursor * 5;  // Cambiar de 10 a 5
+        int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
       }
       break;
@@ -1301,7 +1303,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentMenu = MENU_INTENSITY;
-          menuCursor = pwmValues[selectedLed];
+          menuCursor = pwmValues[selectedLed] * 2;
         }
       }
       break;
@@ -1323,7 +1325,7 @@ void handleSelection() {
       break;
       
     case MENU_INTENSITY:
-      pwmValues[selectedLed] = menuCursor;
+      pwmValues[selectedLed] = (menuCursor + 1) / 2;
       ledStates[selectedLed] = (menuCursor > 0);
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
@@ -1396,7 +1398,7 @@ void handleSelection() {
       
     case MENU_SEQ_CONFIG_COLOR:
       if (currentColorConfig < 4) {
-        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = menuCursor;
+        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = (menuCursor + 1) / 2;
         
         currentColorConfig++;
         if (currentColorConfig < 4) {
@@ -1996,19 +1998,18 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 1);
   lcd.print("Nivel: ");
-  if (menuCursor == 10) {
-    lcd.print("10 (MAX)");
-  } else {
-    lcd.print(menuCursor);
-    lcd.print(" (");
-    lcd.print(menuCursor * 10);
-    lcd.print("%)");
+  int percentage = menuCursor * 5;  // Pasos de 5%
+  lcd.print(percentage);
+  lcd.print("%");
+  if (percentage == 100) {
+    lcd.print(" (MAX)");
   }
   
   lcd.setCursor(0, 2);
   lcd.print("[");
-  for (int i = 0; i < 10; i++) {
-    if (i < menuCursor) {
+  int barLength = map(menuCursor, 0, 20, 0, 18);  // 20 pasos de 5% = 100%
+  for (int i = 0; i < 18; i++) {
+    if (i < barLength) {
       lcd.print("=");
     } else {
       lcd.print(" ");
@@ -2144,15 +2145,13 @@ void displaySeqConfigColor() {
     lcd.setCursor(0, 1);
     lcd.print(ledNames[currentColorConfig]);
     lcd.print(": ");
-    lcd.print(menuCursor);
-    lcd.print(" (");
-    lcd.print(menuCursor * 10);
-    lcd.print("%)");
+    lcd.print(menuCursor * 5);  // Mostrar directamente el porcentaje
+    lcd.print("%");
     
-    lcd.setCursor(0, 2);
     lcd.print("[");
-    for (int i = 0; i < 10; i++) {
-      if (i < menuCursor) {
+    int barLength = map(menuCursor, 0, 20, 0, 18);
+    for (int i = 0; i < 18; i++) {
+      if (i < barLength) {
         lcd.print("=");
       } else {
         lcd.print(" ");
@@ -2387,12 +2386,12 @@ void updateColorPreview() {
   for (int i = 0; i <= currentColorConfig; i++) {
     int intensity;
     if (i == currentColorConfig) {
-      intensity = menuCursor;
+      intensity = menuCursor*5;
     } else {
-      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i];
+      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]*10;
     }
     
-    int pwmValue = map(intensity, 0, 10, 0, 255);
+    int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
   }
   
