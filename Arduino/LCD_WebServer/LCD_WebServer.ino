@@ -744,11 +744,13 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
   });
 
   // Iniciar llenado con volumen específico
-  server.on("/api/llenado/start", HTTP_POST, [](AsyncWebServerRequest *request){
-    if(request->hasParam("volume", true)) {
-      AsyncWebParameter* p = request->getParam("volume", true);
-      float vol = p->value().toFloat();
-      if(vol > 0 && vol <= 200) {
+  server.on("/api/llenado/start", HTTP_POST, [](AsyncWebServerRequest* request) {
+    if (request->hasParam("volume", /*post=*/true)) {
+      const AsyncWebParameter* p = request->getParam("volume", /*post=*/true);
+      const String s = p->value();
+      const float vol = s.toFloat();
+
+      if (vol > 0 && vol <= 200) {
         targetVolume = vol;
         startFilling();
         request->send(200, "text/plain", "OK");
@@ -759,6 +761,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       request->send(400, "text/plain", "Missing volume parameter");
     }
   });
+
 
   // Iniciar bomba manual
   server.on("/api/llenado/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){
