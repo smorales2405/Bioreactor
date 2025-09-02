@@ -1951,13 +1951,13 @@ void displayMainMenu() {
   }
   
   // Hora
-  DateTime now = rtc.now();
-  lcd.setCursor(14, 0);
-  if (now.hour() < 10) lcd.print("0");
-  lcd.print(now.hour());
-  lcd.print(":");
-  if (now.minute() < 10) lcd.print("0");
-  lcd.print(now.minute());
+  //DateTime now = rtc.now();
+  //cd.setCursor(14, 0);
+  //if (now.hour() < 10) lcd.print("0");
+  //lcd.print(now.hour());
+  //lcd.print(":");
+  //if (now.minute() < 10) lcd.print("0");
+  //lcd.print(now.minute());
 }
 
 void displayActionMenu() {
