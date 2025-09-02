@@ -103,6 +103,11 @@ enum MenuState {
   MENU_PH_CALIBRATION_4,      // Nuevo: calibración pH 4
   MENU_PH_CALIBRATION_7,      // Nuevo: calibración pH 7
   MENU_PH_CALIBRATION_10,     // Nuevo: calibración pH 10
+  MENU_PH_PANEL,              // Panel principal de pH
+  MENU_PH_SET_LIMIT,          // Configurar pH límite
+  MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
+  MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
+  MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
   MENU_ACTION,         
   MENU_LED_SELECT,
   MENU_ONOFF,
@@ -143,6 +148,13 @@ const unsigned long sensorReadInterval = 1000;
 // === Variables para calibración pH ===
 float calibrationValue = 0.0;
 int calibrationStep = 0;
+
+float phLimitSet = 7.0;      // pH límite establecido
+bool phControlActive = false; // Control automático activo
+bool co2InjectionActive = false; // Inyección manual activa
+int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
+int co2MinutesRemaining = 0; // Minutos restantes
+unsigned long co2StartTime = 0;
 
 // === Variables para las secuencias ===
 struct SequenceStep {
@@ -364,6 +376,8 @@ void loop() {
   
   // Actualizar medición de flujo continuamente
   updateFlowMeasurement();
+  updateCO2Time();
+  checkPhControl();
   
   // Si la secuencia está ejecutándose, verificar el tiempo
   if (sequenceRunning && rtcInterrupt) {
@@ -371,6 +385,11 @@ void loop() {
     checkSequenceProgress();
     updateDisplay();
   }
+
+  if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE && millis() - lastSensorRead > 1000) {
+  updateDisplay();
+  }
+
 }
 
 void setupWiFi() {
@@ -1078,7 +1097,33 @@ void handleExtraButton() {
       currentMenu = MENU_PH_CALIBRATION_SELECT;
       updateDisplay();
       break;
-      
+
+    case MENU_PH_PANEL:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      phControlActive = false; // Desactivar control si se cancela
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
     // Menú principal - no hacer nada
     case MENU_MAIN:
       // Ya estamos en el menú principal
@@ -1104,7 +1149,24 @@ void incrementCursor() {
       
     case MENU_SENSOR_PH:
       menuCursor++;
-      if (menuCursor > 1) menuCursor = 0;
+      if (menuCursor > 2) menuCursor = 0; // Fijar, Calibrar, Atrás
+      break;
+
+    case MENU_PH_PANEL:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0;
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      if (menuCursor < 140) menuCursor++; // pH 0.0 a 14.0
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet < 60) co2MinutesSet++;
+      break;
+
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
       
     case MENU_PH_CALIBRATION_SELECT:
@@ -1174,7 +1236,6 @@ void incrementCursor() {
     case MENU_SEQ_EXIT_CONFIG_CONFIRM:
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
-
 
     case MENU_LLENADO:
       menuCursor++;
@@ -1395,6 +1456,10 @@ void handleSelection() {
       
     case MENU_SENSOR_PH:
       if (menuCursor == 0) {
+        // Fijar - ir al panel de pH
+        currentMenu = MENU_PH_PANEL;
+        menuCursor = 0;
+      } else if (menuCursor == 1) {
         // Calibrar
         currentMenu = MENU_PH_CALIBRATION_SELECT;
         menuCursor = 0;
@@ -1424,7 +1489,58 @@ void handleSelection() {
         menuCursor = 0;
       }
       break;
-      
+
+    case MENU_PH_PANEL:
+  if (menuCursor == 0) {
+    // Control automático
+    currentMenu = MENU_PH_SET_LIMIT;
+    menuCursor = phLimitSet * 10; // Convertir a escala 0-140 (0.0 a 14.0)
+  } else if (menuCursor == 1) {
+    // Inyección manual
+    currentMenu = MENU_PH_MANUAL_CO2;
+    menuCursor = 0;
+    co2MinutesSet = 0;
+  } else {
+    // Atrás
+    currentMenu = MENU_SENSOR_PH;
+    menuCursor = 0;
+  }
+  break;
+
+case MENU_PH_SET_LIMIT:
+  // Guardar pH límite y activar control
+  phLimitSet = menuCursor / 10.0;
+  phControlActive = true;
+  currentMenu = MENU_PH_PANEL;
+  menuCursor = 0;
+  break;
+
+case MENU_PH_MANUAL_CO2:
+  if (co2MinutesSet > 0) {
+    currentMenu = MENU_PH_MANUAL_CO2_CONFIRM;
+    menuCursor = 0;
+  }
+  break;
+
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      if (menuCursor == 0) {
+        // SI - iniciar inyección
+        startCO2Injection();
+        currentMenu = MENU_PH_MANUAL_CO2_ACTIVE;
+      } else {
+        // NO - volver
+        currentMenu = MENU_PH_MANUAL_CO2;
+        menuCursor = co2MinutesSet;
+      }
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      // Detener inyección
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      break; 
+
     case MENU_ACTION:
       if (menuCursor == 0) {
         // On/Off
@@ -1839,6 +1955,21 @@ void updateDisplay() {
     case MENU_PH_CALIBRATION_SELECT:
       displayPhCalibrationSelect();
       break;
+    case MENU_PH_PANEL:
+      displayPhPanel();
+      break;
+    case MENU_PH_SET_LIMIT:
+      displayPhSetLimit();
+      break;
+    case MENU_PH_MANUAL_CO2:
+      displayPhManualCO2();
+      break;
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      displayPhManualCO2Confirm();
+      break;
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      displayPhManualCO2Active();
+      break;
     case MENU_WEBSERVER:
       displayWebServerMenu();
       break;
@@ -2044,11 +2175,16 @@ void displaySensorPhMenu() {
   
   lcd.setCursor(0, 2);
   lcd.print(menuCursor == 0 ? "> " : "  ");
-  lcd.print("Calibrar");
+  lcd.print("Fijar");
   
   lcd.setCursor(0, 3);
-  lcd.print(menuCursor == 1 ? "> " : "  ");
-  lcd.print("Atras");
+  if (menuCursor == 1) {
+    lcd.print("> Calibrar");
+  } else if (menuCursor == 2) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  Calibrar");
+  }
 }
 
 void displayPhCalibrationSelect() {
@@ -3065,6 +3201,166 @@ void displayCO2Menu() {
     lcd.print("> Atras");
   } else {
     lcd.print("  Apagar");
+  }
+}
+
+void displayPhPanel() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("PANEL pH:");
+  
+  lcd.setCursor(12, 0);
+  lcd.print("pH:");
+  lcd.print(phValue, 1);
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Auto: ");
+  if (phControlActive) {
+    lcd.print(phLimitSet, 1);
+    // Indicar estado con color simulado
+    if (phValue > phLimitSet + 0.2) {
+      lcd.print(" ALK"); // Alcalino
+    } else if (phValue < phLimitSet - 0.2) {
+      lcd.print(" ACD"); // Ácido
+    } else {
+      lcd.print(" OK"); // Equilibrado
+    }
+  } else {
+    lcd.print("OFF");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Manual CO2");
+  if (co2InjectionActive) {
+    lcd.print(" [ON]");
+  }
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayPhSetLimit() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("FIJAR pH LIMITE:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("pH actual: ");
+  lcd.print(phValue, 2);
+  
+  lcd.setCursor(0, 2);
+  float limitValue = menuCursor / 10.0;
+  lcd.print("> pH limite: ");
+  lcd.print(limitValue, 1);
+  
+  lcd.setCursor(0, 3);
+  lcd.print("OK:Activar ESC:Salir");
+}
+
+void displayPhManualCO2() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INYECCION MANUAL:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Minutos CO2:");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("> ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("OK:Confirmar ESC:Atr");
+}
+
+void displayPhManualCO2Confirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR CO2?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Inyectar ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayPhManualCO2Active() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CO2 ACTIVO");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tiempo: ");
+  updateCO2Time();
+  lcd.print(co2MinutesRemaining);
+  lcd.print(":");
+  int seconds = 60 - ((millis() - co2StartTime) / 1000) % 60;
+  if (seconds < 10) lcd.print("0");
+  lcd.print(seconds);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Total: ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para detener");
+}
+
+void startCO2Injection() {
+  co2InjectionActive = true;
+  co2MinutesRemaining = co2MinutesSet;
+  co2StartTime = millis();
+  pcfOutput.digitalWrite(P2, LOW); // Activar CO2
+}
+
+void stopCO2Injection() {
+  co2InjectionActive = false;
+  co2MinutesRemaining = 0;
+  pcfOutput.digitalWrite(P2, HIGH); // Desactivar CO2
+}
+
+void updateCO2Time() {
+  if (co2InjectionActive) {
+    unsigned long elapsed = (millis() - co2StartTime) / 60000; // minutos
+    co2MinutesRemaining = co2MinutesSet - elapsed;
+    
+    if (co2MinutesRemaining <= 0) {
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+    }
+  }
+}
+
+void checkPhControl() {
+  if (phControlActive) {
+    if (phValue > phLimitSet + 0.2) {
+      // pH alcalino - activar CO2
+      if (!co2Active) {
+        co2Active = true;
+        pcfOutput.digitalWrite(P2, LOW);
+      }
+    } else if (phValue <= phLimitSet) {
+      // pH en rango - desactivar CO2
+      if (co2Active) {
+        co2Active = false;
+        pcfOutput.digitalWrite(P2, HIGH);
+      }
+    }
   }
 }
 
