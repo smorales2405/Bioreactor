@@ -928,204 +928,30 @@ void handleButtons() {
 
 void handleExtraButton() {
   switch (currentMenu) {
-    // Menús principales - volver al menú anterior
-    case MENU_SENSORS:
-      currentMenu = MENU_MAIN;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-      
-    case MENU_ACTION:
-      currentMenu = MENU_MAIN;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_LLENADO:
-      currentMenu = MENU_MAIN;
-      menuCursor = 2;
-      updateDisplay();
-      break;
-      
-    case MENU_AIREACION:
-      currentMenu = MENU_MAIN;
-      menuCursor = 3;
-      updateDisplay();
-      break;
-      
-    case MENU_CO2:
-      currentMenu = MENU_MAIN;
-      menuCursor = 4;
-      updateDisplay();
-      break;
-      
-    case MENU_WEBSERVER:
-      currentMenu = MENU_MAIN;
-      menuCursor = 5;
-      updateDisplay();
-      break;
-      
-    // Submenús de sensores
-    case MENU_SENSOR_PH:
-      currentMenu = MENU_SENSORS;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_PH_CALIBRATION_SELECT:
-      currentMenu = MENU_SENSOR_PH;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-      
-    // Submenús de LEDs
-    case MENU_LED_SELECT:
-      currentMenu = MENU_ACTION;
-      menuCursor = selectedAction;
-      updateDisplay();
-      break;
-      
-    case MENU_ONOFF:
-    case MENU_INTENSITY:
-      currentMenu = MENU_LED_SELECT;
-      menuCursor = selectedLed;
-      updateDisplay();
-      break;
-      
-    // Menús de secuencias
-    case MENU_SEQ_LIST:
-      currentMenu = MENU_ACTION;
-      menuCursor = 2;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_OPTIONS:
-      currentMenu = MENU_SEQ_LIST;
-      menuCursor = selectedSequence;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_EXECUTION_MODE:
-      currentMenu = MENU_SEQ_OPTIONS;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-      
-    // Configuración de secuencias - mostrar confirmación de salida
     case MENU_SEQ_CONFIG_CANTIDAD:
     case MENU_SEQ_CONFIG_COLOR:
     case MENU_SEQ_CONFIG_TIME:
-    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:  // Agregar este nuevo caso
       currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
       menuCursor = 1;
       updateDisplay();
       break;
       
-    // Secuencia en ejecución - mostrar confirmación
     case MENU_SEQ_RUNNING:
       currentMenu = MENU_SEQ_STOP_CONFIRM;
       menuCursor = 1;
       updateDisplay();
       break;
       
-    // Menús de llenado
-    case MENU_LLENADO_SET_VOLUME:
-      currentMenu = MENU_LLENADO;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_LLENADO_CONFIRM:
-      currentMenu = MENU_LLENADO;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_LLENADO_ACTIVE:
-      currentMenu = MENU_LLENADO_STOP_CONFIRM;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    // Confirmaciones - actuar como "NO/Cancelar"
-    case MENU_SEQ_CONFIRM_SAVE:
-      currentMenu = MENU_SEQ_LIST;
-      menuCursor = selectedSequence;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_STOP_CONFIRM:
-      currentMenu = MENU_SEQ_RUNNING;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
-      if (currentConfigStep < sequences[selectedSequence].stepCount) {
-        if (currentColorConfig < 4) {
-          currentMenu = MENU_SEQ_CONFIG_COLOR;
-        } else {
-          currentMenu = MENU_SEQ_CONFIG_TIME;
-        }
-      } else {
-        currentMenu = MENU_SEQ_CONFIG_CANTIDAD;
-      }
-      updateDisplay();
-      break;
-      
-    case MENU_LLENADO_STOP_CONFIRM:
-      currentMenu = MENU_LLENADO_ACTIVE;
-      updateDisplay();
-      break;
-      
-    case MENU_LLENADO_RESET_CONFIRM:
-      currentMenu = MENU_LLENADO;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_DELETE_ALL_CONFIRM:
-      currentMenu = MENU_SEQ_LIST;
-      menuCursor = 10;
-      updateDisplay();
-      break;
-      
-    // Calibración pH - casos especiales
     case MENU_PH_CALIBRATION_4:
     case MENU_PH_CALIBRATION_7:
     case MENU_PH_CALIBRATION_10:
       currentMenu = MENU_PH_CALIBRATION_SELECT;
       updateDisplay();
       break;
-
-    case MENU_PH_PANEL:
-      currentMenu = MENU_SENSOR_PH;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_SET_LIMIT:
-      phControlActive = false; // Desactivar control si se cancela
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2:
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2_ACTIVE:
-      stopCO2Injection();
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    // Menú principal - no hacer nada
-    case MENU_MAIN:
-      // Ya estamos en el menú principal
+      
+    default:
+      // No hacer nada en otros menús
       break;
   }
 }
