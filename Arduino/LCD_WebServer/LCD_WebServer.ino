@@ -1292,12 +1292,29 @@ void decrementCursor() {
       
     case MENU_SENSOR_PH:
       menuCursor--;
-      if (menuCursor < 0) menuCursor = 1;
+      if (menuCursor < 0) menuCursor = 2; // Ahora son 3 opciones: Fijar, Calibrar, Atrás
       break;
       
     case MENU_PH_CALIBRATION_SELECT:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
+      break;
+      
+    case MENU_PH_PANEL:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones: Auto, Manual CO2, Atrás
+      break;
+      
+    case MENU_PH_SET_LIMIT:
+      if (menuCursor > 0) menuCursor--; // pH 0.0 a 14.0 (0-140)
+      break;
+      
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet > 0) co2MinutesSet--;
+      break;
+      
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
       
     case MENU_ACTION:
@@ -1491,36 +1508,36 @@ void handleSelection() {
       break;
 
     case MENU_PH_PANEL:
-  if (menuCursor == 0) {
-    // Control automático
-    currentMenu = MENU_PH_SET_LIMIT;
-    menuCursor = phLimitSet * 10; // Convertir a escala 0-140 (0.0 a 14.0)
-  } else if (menuCursor == 1) {
-    // Inyección manual
-    currentMenu = MENU_PH_MANUAL_CO2;
-    menuCursor = 0;
-    co2MinutesSet = 0;
-  } else {
-    // Atrás
-    currentMenu = MENU_SENSOR_PH;
-    menuCursor = 0;
-  }
-  break;
+      if (menuCursor == 0) {
+        // Control automático
+        currentMenu = MENU_PH_SET_LIMIT;
+        menuCursor = phLimitSet * 10; // Convertir a escala 0-140 (0.0 a 14.0)
+      } else if (menuCursor == 1) {
+        // Inyección manual
+        currentMenu = MENU_PH_MANUAL_CO2;
+        menuCursor = 0;
+        co2MinutesSet = 0;
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSOR_PH;
+        menuCursor = 0;
+      }
+      break;
 
-case MENU_PH_SET_LIMIT:
-  // Guardar pH límite y activar control
-  phLimitSet = menuCursor / 10.0;
-  phControlActive = true;
-  currentMenu = MENU_PH_PANEL;
-  menuCursor = 0;
-  break;
+    case MENU_PH_SET_LIMIT:
+      // Guardar pH límite y activar control
+      phLimitSet = menuCursor / 10.0;
+      phControlActive = true;
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      break;
 
-case MENU_PH_MANUAL_CO2:
-  if (co2MinutesSet > 0) {
-    currentMenu = MENU_PH_MANUAL_CO2_CONFIRM;
-    menuCursor = 0;
-  }
-  break;
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet > 0) {
+        currentMenu = MENU_PH_MANUAL_CO2_CONFIRM;
+        menuCursor = 0;
+      }
+      break;
 
     case MENU_PH_MANUAL_CO2_CONFIRM:
       if (menuCursor == 0) {
