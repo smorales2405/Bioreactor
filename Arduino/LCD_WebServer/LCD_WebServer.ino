@@ -1127,10 +1127,6 @@ void handleExtraButton() {
     case MENU_MAIN:
       // Ya estamos en el menú principal
       break;
-      
-    default:
-      // Para cualquier otro caso no manejado
-      break;
   }
 }
 
