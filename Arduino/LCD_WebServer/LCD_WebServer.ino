@@ -919,8 +919,7 @@ void handleButtons() {
   
   // Pulsador adicional
   if (pcfInput.digitalRead(P1) == LOW) {
-    if (millis() - lastExtraButtonPress > debounceDelay && 
-        millis() - lastButtonPress > debounceDelay) {
+    if (millis() - lastExtraButtonPress > debounceDelay) {
       lastExtraButtonPress = millis();
       handleExtraButton();
     }
