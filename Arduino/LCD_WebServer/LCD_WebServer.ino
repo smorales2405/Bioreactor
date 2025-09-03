@@ -949,9 +949,31 @@ void handleExtraButton() {
       currentMenu = MENU_PH_CALIBRATION_SELECT;
       updateDisplay();
       break;
-      
-    default:
-      // No hacer nada en otros menús
+
+    case MENU_PH_PANEL:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      phControlActive = false; // Desactivar control si se cancela
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
       break;
   }
 }
