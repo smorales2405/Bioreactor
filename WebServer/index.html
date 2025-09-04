@@ -12,26 +12,31 @@
             <h1>Sistema de Control ESP32</h1>
             <div class="menu-grid">
                 <div class="menu-card" onclick="showView('sensors')">
-                    <div class="menu-icon">ðŸŒ¡ï¸</div>
+                    <div class="menu-icon">🌡️</div>
                     <h2>Sensores</h2>
                     <p>Monitoreo en tiempo real</p>
                 </div>
                 <div class="menu-card" onclick="showView('leds')">
-                    <div class="menu-icon">ðŸ’¡</div>
+                    <div class="menu-icon">💡</div>
                     <h2>Control LED</h2>
                     <p>Control y secuencias</p>
                 </div>
                 <div class="menu-card" onclick="showView('aireacion')">
-                    <div class="menu-icon">ðŸ’¨</div>
-                    <h2>AireaciÃ³n</h2>
+                    <div class="menu-icon">💨</div>
+                    <h2>Aireación</h2>
                     <p>Control de aire y CO2</p>
+                </div>
+                <div class="menu-card" onclick="showView('llenado')">
+                    <div class="menu-icon">💧</div>
+                    <h2>Llenado</h2>
+                    <p>Control de llenado</p>
                 </div>
             </div>
         </div>
 
         <div id="sensors" class="view">
             <div class="header">
-                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
+                <button class="btn-back" onclick="showView('main-menu')">← Volver</button>
                 <h1>Monitoreo de Sensores</h1>
             </div>
 
@@ -40,14 +45,14 @@
                     <h2>Temperatura</h2>
                     <div class="sensor-value">
                         <span id="temp-value">--</span>
-                        <span class="unit">Â°C</span>
+                        <span class="unit"> °C</span>
                     </div>
                     <div class="sensor-gauge">
                         <div class="gauge-fill" id="temp-gauge"></div>
                     </div>
                     <div class="sensor-range">
-                        <span>0Â°C</span>
-                        <span>50Â°C</span>
+                        <span>0 °C</span>
+                        <span>50 °C</span>
                     </div>
                 </div>
 
@@ -64,7 +69,7 @@
                         <span>14</span>
                     </div>
                     <div class="ph-scale">
-                        <div class="ph-acid">Ãcido</div>
+                        <div class="ph-acid">Ácido</div>
                         <div class="ph-neutral">Neutro</div>
                         <div class="ph-base">Base</div>
                     </div>
@@ -74,7 +79,7 @@
                     <h2>Turbidez</h2>
                     <div class="sensor-value">
                         <span id="turbidity-value">--</span>
-                        <span class="unit">NTU</span>
+                        <span class="unit">MC/mL</span>
                     </div>
                     <div class="sensor-gauge">
                         <div class="gauge-fill" id="turbidity-gauge"></div>
@@ -93,7 +98,7 @@
 
         <div id="leds" class="view">
             <div class="header">
-                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
+                <button class="btn-back" onclick="showView('main-menu')">← Volver</button>
                 <h1>Control de Tiras LED</h1>
             </div>
 
@@ -182,7 +187,7 @@
 
             <div id="tab-sequences" class="tab-content">
                 <div class="sequence-status" id="sequence-status" style="display:none;">
-                    <h3>Secuencia en EjecuciÃ³n</h3>
+                    <h3>Secuencia en Ejecución</h3>
                     <p>Secuencia <span id="running-seq-id">-</span> - Paso <span id="running-step">-</span>/<span id="total-steps">-</span></p>
                     <p>Tiempo: <span id="elapsed-time">-</span> / <span id="total-time">-</span></p>
                     <button class="btn btn-off" onclick="stopSequence()">Detener Secuencia</button>
@@ -197,7 +202,7 @@
                     <h3>Configurar Secuencia <span id="edit-seq-id">-</span></h3>
 
                     <div class="step-config">
-                        <label>NÃºmero de pasos:</label>
+                        <label>Número de pasos:</label>
                         <input type="number" id="step-count" min="1" max="10" value="1" onchange="updateStepConfig()">
                     </div>
 
@@ -213,8 +218,8 @@
 
         <div id="aireacion" class="view">
             <div class="header">
-                <button class="btn-back" onclick="showView('main-menu')">â† Volver</button>
-                <h1>Control de AireaciÃ³n</h1>
+                <button class="btn-back" onclick="showView('main-menu')">← Volver</button>
+                <h1>Control de Aireación</h1>
             </div>
 
             <div class="aireacion-grid">
@@ -313,7 +318,7 @@
             labels: [],
             datasets: [
                 {
-                    label: 'Temperatura (Â°C)',
+                    label: 'Temperatura (°C)',
                     data: [],
                     borderColor: 'rgb(255, 99, 132)',
                     backgroundColor: 'rgba(255, 99, 132, 0.1)',
@@ -327,7 +332,7 @@
                     yAxisID: 'y1'
                 },
                 {
-                    label: 'Turbidez (NTU/100)',
+                    label: 'Turbidez (MC/mL)',
                     data: [],
                     borderColor: 'rgb(75, 192, 192)',
                     backgroundColor: 'rgba(75, 192, 192, 0.1)',
@@ -340,7 +345,7 @@
         let sequenceUpdateInterval = null;
         let editingSequence = null;
 
-        // NavegaciÃ³n entre vistas
+        // Navegación entre vistas
         function showView(viewName) {
             document.querySelectorAll('.view').forEach(view => {
                 view.classList.remove('active');
@@ -373,7 +378,7 @@
             }
         }
 
-        // NavegaciÃ³n entre tabs
+        // Navegación entre tabs
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.classList.remove('active');
@@ -392,7 +397,7 @@
             }
         }
 
-        // Inicializar grÃ¡fico de sensores
+        // Inicializar gráfico de sensores
         function initSensorChart() {
             const ctx = document.getElementById('sensor-chart').getContext('2d');
             
@@ -413,7 +418,7 @@
                     plugins: {
                         title: {
                             display: true,
-                            text: 'HistÃ³rico de Sensores',
+                            text: 'Histórico de Sensores',
                             color: '#ffffff'
                         },
                         legend: {
@@ -443,7 +448,7 @@
                             position: 'left',
                             title: {
                                 display: true,
-                                text: 'Temp (Â°C) / Turb (NTU/100)',
+                                text: 'Temp (°C) / Turb (MC/ml)',
                                 color: '#ffffff'
                             },
                             ticks: {
@@ -492,7 +497,7 @@
                     document.getElementById('ph-gauge').style.width = `${(data.ph / 14) * 100}%`;
                     document.getElementById('turbidity-gauge').style.width = `${(data.turbidity / 3000) * 100}%`;
 
-                    // Color del gauge de pH segÃºn el valor
+                    // Color del gauge de pH según el valor
                     const phGauge = document.getElementById('ph-gauge');
                     if (data.ph < 6.5) {
                         phGauge.style.background = '#ff4444';
@@ -502,7 +507,7 @@
                         phGauge.style.background = '#44ff44';
                     }
 
-                    // Actualizar grÃ¡fico
+                    // Actualizar gráfico
                     if (sensorChart) {
                         const now = new Date();
                         const timeLabel = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
@@ -510,7 +515,7 @@
                         sensorData.labels.push(timeLabel);
                         sensorData.datasets[0].data.push(data.temperature);
                         sensorData.datasets[1].data.push(data.ph);
-                        sensorData.datasets[2].data.push(data.turbidity / 100); // Escalar para el grÃ¡fico
+                        sensorData.datasets[2].data.push(data.turbidity / 100); // Escalar para el gráfico
 
                         // Limitar datos
                         if (sensorData.labels.length > maxDataPoints) {
@@ -684,7 +689,7 @@
                         </div>
                     </div>
                     <div class="step-time">
-                        <label>DÃ­as:</label>
+                        <label>Días:</label>
                         <input type="number" id="step-${i}-days" min="0" max="30" value="0">
                         <label>Horas:</label>
                         <input type="number" id="step-${i}-hours" min="0" max="23" value="0">
@@ -799,7 +804,7 @@
                 });
         }
 
-        // Control de AireaciÃ³n
+        // Control de Aireación
         function controlAireacion(tipo, action) {
             fetch(`/api/${tipo}/${action}`)
                 .then(response => response.text())
@@ -946,7 +951,7 @@
                 .catch(error => console.error('Error:', error));
         }
 
-        // ActualizaciÃ³n automÃ¡tica
+        // Actualización automática
         setInterval(() => {
             if (currentView === 'sensors') {
                 updateSensors();
@@ -962,7 +967,7 @@
 
         // Inicializar al cargar
         window.onload = function() {
-            // La vista inicial ya estÃ¡ activa por CSS
+            // La vista inicial ya está activa por CSS
         };
     </script>
 </body>

@@ -34,7 +34,7 @@ body {
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* MenÃº Principal */
+/* Menú Principal */
 #main-menu h1 {
     text-align: center;
     font-size: 3em;
@@ -116,7 +116,7 @@ body {
     font-size: 1.1em;
 }
 
-/* Header con botÃ³n volver */
+/* Header con botón volver */
 .header {
     display: flex;
     align-items: center;
@@ -707,7 +707,7 @@ body {
         width: 100%;
     }
 
-    /* Vista de AireaciÃ³n */
+    /* Vista de Aireación */
     .aireacion-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
@@ -841,7 +841,7 @@ body {
                 color: #fff;
             }
 
-    /* Responsive para aireaciÃ³n */
+    /* Responsive para aireación */
     @media (max-width: 768px) {
         .aireacion-grid {
             grid-template-columns: 1fr;
