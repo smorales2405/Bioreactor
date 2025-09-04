@@ -105,6 +105,14 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_TURB_COEF_B 128      // Float (4 bytes)
 #define EEPROM_TURB_COEF_C 132      // Float (4 bytes)
 
+// Direcciones EEPROM para pH
+#define EEPROM_PH_MUESTRA1_V 140  // Float (4 bytes)
+#define EEPROM_PH_MUESTRA1_PH 144 // Float (4 bytes)
+#define EEPROM_PH_MUESTRA2_V 148  // Float (4 bytes)
+#define EEPROM_PH_MUESTRA2_PH 152 // Float (4 bytes)
+#define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
+#define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -113,15 +121,22 @@ float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
 int turbCalibValue = 0;  // Valor temporal para calibración
 int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
 
+// Variables para calibración de pH
+float phMuestra1V = 0.0, phMuestra1pH = 0.0;
+float phMuestra2V = 0.0, phMuestra2pH = 0.0;
+float phCoefM = 0.0, phCoefB = 0.0;
+int phCalibValue = 7;  // Valor temporal para calibración (iniciar en pH neutro)
+int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
+
 // === Estados del menú ===
 enum MenuState {
   MENU_MAIN,           
   MENU_SENSORS,        
   MENU_SENSOR_PH,      
-  MENU_PH_CALIBRATION_SELECT, // Nuevo: selección buffer calibración
-  MENU_PH_CALIBRATION_4,      // Nuevo: calibración pH 4
-  MENU_PH_CALIBRATION_7,      // Nuevo: calibración pH 7
-  MENU_PH_CALIBRATION_10,     // Nuevo: calibración pH 10
+  MENU_PH_CALIBRATION_MENU,
+  MENU_PH_SET_MUESTRA,
+  MENU_PH_CONFIRM_MUESTRA,
+  MENU_PH_CALIBRATING,
   MENU_PH_PANEL,              // Panel principal de pH
   MENU_PH_SET_LIMIT,          // Configurar pH límite
   MENU_SENSOR_TURBIDEZ,
@@ -234,7 +249,8 @@ void setup() {
   
   // Inicializar EEPROM
   EEPROM.begin(512);
-  loadTurbidityCalibration(); 
+  loadTurbidityCalibration();
+  loadPhCalibration(); 
 
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
@@ -841,79 +857,8 @@ void readSensors() {
   if (turbidez > 3000) turbidez = 3000;
   
   // Leer pH (AIN1)
-  int16_t raw_ph = ads.readADC_SingleEnded(1) / 10;
-  phValue = phSensor.readPH(raw_ph, temperature);
-}
-
-void handlePhCalibration(float targetPH) {
-  static bool isCalibrating = false;
-  if (isCalibrating) return; // Evitar reentrada
-  isCalibrating = true;
-  
-  int16_t raw_ph = ads.readADC_SingleEnded(1) / 10;
-  float voltage_ph = ads.computeVolts(raw_ph);
-  
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Calibrando pH ");
-  lcd.print(targetPH, 1);
-  
-  lcd.setCursor(0, 1);
-  lcd.print("Voltage: ");
-  lcd.print(voltage_ph, 3);
-  lcd.print("V");
-  
-  lcd.setCursor(0, 2);
-  lcd.print("pH actual: ");
-  lcd.print(phValue, 2);
-  
-  lcd.setCursor(0, 3);
-  lcd.print("OK:Calibrar ESC:Salir");
-  
-  // Esperar confirmación
-  while (true) {
-    if (digitalRead(ENCODER_SW) == LOW) {
-      delay(debounceDelay);
-      // Calibrar con el valor objetivo
-      phSensor.calibration(voltage_ph, temperature, (char*)(targetPH == 7.0 ? "CALPH" : 
-                                                               targetPH == 4.0 ? "CALPH4" : "CALPH10"));
-      
-      lcd.clear();
-      lcd.setCursor(0, 1);
-      lcd.print("Calibracion OK!");
-      delay(2000);
-      
-      currentMenu = MENU_PH_CALIBRATION_SELECT;
-      menuCursor = targetPH == 4.0 ? 0 : targetPH == 7.0 ? 1 : 2;
-      isCalibrating = false;
-      updateDisplay();
-      return;
-    }
-    
-    if (pcfInput.digitalRead(P1) == LOW) {
-      delay(debounceDelay);
-      currentMenu = MENU_PH_CALIBRATION_SELECT;
-      isCalibrating = false;
-      updateDisplay();
-      return;
-    }
-    
-    // Actualizar lecturas
-    if (millis() - lastSensorRead > 500) {
-      lastSensorRead = millis();
-      raw_ph = ads.readADC_SingleEnded(1) / 10;
-      voltage_ph = ads.computeVolts(raw_ph);
-      phValue = phSensor.readPH(raw_ph, temperature);
-      
-      lcd.setCursor(9, 1);
-      lcd.print(voltage_ph, 3);
-      lcd.print("V ");
-      
-      lcd.setCursor(11, 2);
-      lcd.print(phValue, 2);
-      lcd.print(" ");
-    }
-  }
+  int16_t raw_ph = ads.readADC_SingleEnded(1);
+  phValue = getPhValueCalibrated();
 }
 
 void handleEncoder() {
@@ -968,13 +913,6 @@ void handleExtraButton() {
       menuCursor = 1;
       updateDisplay();
       break;
-      
-    case MENU_PH_CALIBRATION_4:
-    case MENU_PH_CALIBRATION_7:
-    case MENU_PH_CALIBRATION_10:
-      currentMenu = MENU_PH_CALIBRATION_SELECT;
-      updateDisplay();
-      break;
 
     case MENU_PH_PANEL:
       currentMenu = MENU_SENSOR_PH;
@@ -1021,6 +959,19 @@ void incrementCursor() {
       if (menuCursor > 2) menuCursor = 0; // Fijar, Calibrar, Atrás
       break;
 
+    case MENU_PH_CALIBRATION_MENU:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0; // 4 opciones
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      if (phCalibValue < 14) phCalibValue++;
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_PH_PANEL:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0;
@@ -1038,11 +989,6 @@ void incrementCursor() {
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
       
-    case MENU_PH_CALIBRATION_SELECT:
-      menuCursor++;
-      if (menuCursor > 3) menuCursor = 0; // pH 4, 7, 10, Atrás
-      break;
-
     case MENU_SENSOR_TURBIDEZ:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // 3 opciones
@@ -1182,9 +1128,17 @@ void decrementCursor() {
       if (menuCursor < 0) menuCursor = 2; // Ahora son 3 opciones: Fijar, Calibrar, Atrás
       break;
       
-    case MENU_PH_CALIBRATION_SELECT:
+    case MENU_PH_CALIBRATION_MENU:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      if (phCalibValue > 0) phCalibValue--;
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
       
     case MENU_PH_PANEL:
@@ -1383,9 +1337,10 @@ void handleSelection() {
         currentMenu = MENU_PH_PANEL;
         menuCursor = 0;
       } else if (menuCursor == 1) {
-        // Calibrar
-        currentMenu = MENU_PH_CALIBRATION_SELECT;
+        // Calibración nueva
+        currentMenu = MENU_PH_CALIBRATION_MENU;
         menuCursor = 0;
+        loadPhCalibration(); // Cargar datos de EEPROM
       } else {
         // Atrás
         currentMenu = MENU_SENSORS;
@@ -1393,23 +1348,37 @@ void handleSelection() {
       }
       break;
       
-    case MENU_PH_CALIBRATION_SELECT:
-      if (menuCursor == 0) {
-        // Calibrar pH 4
-        //currentMenu = MENU_PH_CALIBRATION_4;
-        handlePhCalibration(4.0);
-      } else if (menuCursor == 1) {
-        // Calibrar pH 7
-        //currentMenu = MENU_PH_CALIBRATION_7;
-        handlePhCalibration(7.0);
+    case MENU_PH_CALIBRATION_MENU:
+      if (menuCursor < 2) {
+        // Muestra 1 o 2
+        selectedPhMuestra = menuCursor;
+        currentMenu = MENU_PH_SET_MUESTRA;
+        phCalibValue = 7; // Valor inicial pH neutro
       } else if (menuCursor == 2) {
-        // Calibrar pH 10
-        //currentMenu = MENU_PH_CALIBRATION_10;
-        handlePhCalibration(10.0);
+        // Calibrar
+        currentMenu = MENU_PH_CALIBRATING;
+        performPhCalibration();
       } else {
         // Atrás
         currentMenu = MENU_SENSOR_PH;
-        menuCursor = 0;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      currentMenu = MENU_PH_CONFIRM_MUESTRA;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      if (menuCursor == 0) {
+        // SI - Guardar
+        savePhMuestra(selectedPhMuestra);
+        currentMenu = MENU_PH_CALIBRATION_MENU;
+        menuCursor = selectedPhMuestra;
+      } else {
+        // NO - Volver a editar
+        currentMenu = MENU_PH_SET_MUESTRA;
       }
       break;
 
@@ -1932,8 +1901,17 @@ void updateDisplay() {
     case MENU_SENSOR_PH:
       displaySensorPhMenu();
       break;
-    case MENU_PH_CALIBRATION_SELECT:
-      displayPhCalibrationSelect();
+    case MENU_PH_CALIBRATION_MENU:
+      displayPhCalibrationMenu();
+      break;
+    case MENU_PH_SET_MUESTRA:
+      displayPhSetMuestra();
+      break;
+    case MENU_PH_CONFIRM_MUESTRA:
+      displayPhConfirmMuestra();
+      break;
+    case MENU_PH_CALIBRATING:
+      displayPhCalibrating();
       break;
     case MENU_PH_PANEL:
       displayPhPanel();
@@ -2174,21 +2152,16 @@ void displaySensorPhMenu() {
   lcd.print("SENSOR pH:");
   
   lcd.setCursor(0, 1);
-  lcd.print("Valor actual: ");
-  lcd.print(phValue, 2);
-  
-  lcd.setCursor(0, 2);
   lcd.print(menuCursor == 0 ? "> " : "  ");
   lcd.print("Fijar");
   
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Calibracion");
+  
   lcd.setCursor(0, 3);
-  if (menuCursor == 1) {
-    lcd.print("> Calibrar");
-  } else if (menuCursor == 2) {
-    lcd.print("> Atras");
-  } else {
-    lcd.print("  Calibrar");
-  }
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
 }
 
 void displayPhCalibrationSelect() {
@@ -3630,6 +3603,201 @@ float getTurbidityConcentration() {
   if (concentration > 100) concentration = 100;
   
   return concentration;
+}
+
+void displayPhCalibrationMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRAR pH:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Muestra 1");
+  if (phMuestra1pH > 0) {
+    lcd.setCursor(14, 1);
+    lcd.print("[OK]");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Muestra 2");
+  if (phMuestra2pH > 0) {
+    lcd.setCursor(14, 2);
+    lcd.print("[OK]");
+  }
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 2) {
+    lcd.print("> Calibrar");
+  } else if (menuCursor == 3) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  ");
+    lcd.print(menuCursor == 2 ? "Calibrar" : "Atras");
+  }
+}
+
+void displayPhSetMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("pH MUESTRA ");
+  lcd.print(selectedPhMuestra + 1);
+  lcd.print(":");
+  
+  // Mostrar voltaje actual
+  float voltage = getPhVoltage();
+  lcd.setCursor(0, 1);
+  lcd.print("Voltaje: ");
+  lcd.print(voltage, 3);
+  lcd.print("V");
+  
+  // Configurar pH
+  lcd.setCursor(0, 2);
+  lcd.print("pH: ");
+  if (phCalibValue < 10) lcd.print(" ");
+  lcd.print(phCalibValue);
+  lcd.print(".0");
+  
+  // Barra visual del pH
+  lcd.setCursor(0, 3);
+  lcd.print("[");
+  int barPos = map(phCalibValue, 0, 14, 0, 14);
+  for (int i = 0; i < 14; i++) {
+    if (i == barPos) lcd.print("|");
+    else if (i == 7) lcd.print("-");
+    else lcd.print(" ");
+  }
+  lcd.print("]");
+}
+
+void displayPhConfirmMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR pH?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("V: ");
+  lcd.print(getPhVoltage(), 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("pH: ");
+  lcd.print(phCalibValue);
+  lcd.print(".0");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayPhCalibrating() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRANDO pH...");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Calculando");
+  lcd.setCursor(0, 2);
+  lcd.print("regresion lineal...");
+  
+  delay(1500);
+  
+  // Verificar si la calibración fue exitosa
+  if (phCoefM != 0) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("CALIBRACION OK!");
+    lcd.setCursor(0, 1);
+    lcd.print("m = ");
+    lcd.print(phCoefM, 3);
+    lcd.setCursor(0, 2);
+    lcd.print("b = ");
+    lcd.print(phCoefB, 3);
+    lcd.setCursor(0, 3);
+    lcd.print("pH = m*V + b");
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Error: Faltan");
+    lcd.setCursor(0, 2);
+    lcd.print("muestras!");
+  }
+  
+  delay(2000);
+  currentMenu = MENU_PH_CALIBRATION_MENU;
+  menuCursor = 2;
+}
+
+float getPhVoltage() {
+  // Leer del sensor de pH conectado al ADC
+  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
+  float voltage = ads.computeVolts(adc);
+  return voltage;
+}
+
+void savePhMuestra(int muestra) {
+  float voltage = getPhVoltage();
+  float ph = (float)phCalibValue;
+  
+  if (muestra == 0) {
+    phMuestra1V = voltage;
+    phMuestra1pH = ph;
+    EEPROM.put(EEPROM_PH_MUESTRA1_V, voltage);
+    EEPROM.put(EEPROM_PH_MUESTRA1_PH, ph);
+  } else if (muestra == 1) {
+    phMuestra2V = voltage;
+    phMuestra2pH = ph;
+    EEPROM.put(EEPROM_PH_MUESTRA2_V, voltage);
+    EEPROM.put(EEPROM_PH_MUESTRA2_PH, ph);
+  }
+  EEPROM.commit();
+}
+
+void loadPhCalibration() {
+  EEPROM.get(EEPROM_PH_MUESTRA1_V, phMuestra1V);
+  EEPROM.get(EEPROM_PH_MUESTRA1_PH, phMuestra1pH);
+  EEPROM.get(EEPROM_PH_MUESTRA2_V, phMuestra2V);
+  EEPROM.get(EEPROM_PH_MUESTRA2_PH, phMuestra2pH);
+  EEPROM.get(EEPROM_PH_COEF_M, phCoefM);
+  EEPROM.get(EEPROM_PH_COEF_B, phCoefB);
+}
+
+void performPhCalibration() {
+  // Regresión lineal: pH = m*V + b
+  // Usando 2 puntos
+  
+  if (phMuestra1V != phMuestra2V && phMuestra1pH > 0 && phMuestra2pH > 0) {
+    // Calcular pendiente
+    phCoefM = (phMuestra2pH - phMuestra1pH) / (phMuestra2V - phMuestra1V);
+    
+    // Calcular intercepto
+    phCoefB = phMuestra1pH - phCoefM * phMuestra1V;
+    
+    // Guardar en EEPROM
+    EEPROM.put(EEPROM_PH_COEF_M, phCoefM);
+    EEPROM.put(EEPROM_PH_COEF_B, phCoefB);
+    EEPROM.commit();
+  } else {
+    // Error - voltajes iguales o faltan muestras
+    phCoefM = 0;
+    phCoefB = 0;
+  }
+}
+
+float getPhValueCalibrated() {
+  // Si no hay calibración, retornar valor por defecto
+  if (phCoefM == 0) {
+    return 7.0; // pH neutro por defecto
+  }
+  
+  float voltage = getPhVoltage();
+  float ph = phCoefM * voltage + phCoefB;
+  
+  // Limitar el rango de pH entre 0 y 14
+  if (ph < 0) ph = 0;
+  if (ph > 14) ph = 14;
+  
+  return ph;
 }
 
 void handleEmergencyState() {
