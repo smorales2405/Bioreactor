@@ -94,6 +94,25 @@ const unsigned long debounceDelay = 200;
 PCF8574 pcfInput(0x20);
 PCF8574 pcfOutput(0x21);
 
+// Direcciones EEPROM para turbidez
+#define EEPROM_TURB_MUESTRA1_V 100  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA1_C 104  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA2_V 108  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA2_C 112  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA3_V 116  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA3_C 120  // Float (4 bytes)
+#define EEPROM_TURB_COEF_A 124      // Float (4 bytes)
+#define EEPROM_TURB_COEF_B 128      // Float (4 bytes)
+#define EEPROM_TURB_COEF_C 132      // Float (4 bytes)
+
+// Variables para calibración de turbidez
+float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
+float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
+float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
+float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
+int turbCalibValue = 0;  // Valor temporal para calibración
+int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
+
 // === Estados del menú ===
 enum MenuState {
   MENU_MAIN,           
@@ -105,6 +124,11 @@ enum MenuState {
   MENU_PH_CALIBRATION_10,     // Nuevo: calibración pH 10
   MENU_PH_PANEL,              // Panel principal de pH
   MENU_PH_SET_LIMIT,          // Configurar pH límite
+  MENU_SENSOR_TURBIDEZ,
+  MENU_TURB_CALIBRATION,
+  MENU_TURB_SET_MUESTRA,
+  MENU_TURB_CONFIRM_MUESTRA,
+  MENU_TURB_CALIBRATING,
   MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
   MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
   MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
@@ -209,7 +233,8 @@ void setup() {
   Serial.println("Iniciando sistema integrado...");
   
   // Inicializar EEPROM
-  EEPROM.begin(32);
+  EEPROM.begin(512);
+  loadTurbidityCalibration(); 
 
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
@@ -1017,7 +1042,25 @@ void incrementCursor() {
       menuCursor++;
       if (menuCursor > 3) menuCursor = 0; // pH 4, 7, 10, Atrás
       break;
-      
+
+    case MENU_SENSOR_TURBIDEZ:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      menuCursor++;
+      if (menuCursor > 4) menuCursor = 0; // 5 opciones
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      if (turbCalibValue < 100) turbCalibValue++;
+      break;
+
+    case MENU_TURB_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_ACTION:
       menuCursor++;
       if (menuCursor > 3) menuCursor = 0;
@@ -1160,7 +1203,21 @@ void decrementCursor() {
     case MENU_PH_MANUAL_CO2_CONFIRM:
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
-      
+
+    case MENU_SENSOR_TURBIDEZ:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 4;
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      if (turbCalibValue > 0) turbCalibValue--;
+      break;
+
     case MENU_ACTION:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
@@ -1304,13 +1361,15 @@ void handleSelection() {
       
     case MENU_SENSORS:
       if (menuCursor == 0) {
-        // Temperatura - no hace nada, solo muestra
+        // Temperatura - no hace nada
       } else if (menuCursor == 1) {
         // pH - entrar a submenú
         currentMenu = MENU_SENSOR_PH;
         menuCursor = 0;
       } else if (menuCursor == 2) {
-        // Turbidez - no hace nada, solo muestra
+        // Turbidez - entrar a submenú
+        currentMenu = MENU_SENSOR_TURBIDEZ;
+        menuCursor = 0;
       } else {
         // Atrás
         currentMenu = MENU_MAIN;
@@ -1404,6 +1463,57 @@ void handleSelection() {
       currentMenu = MENU_PH_PANEL;
       menuCursor = 1;
       break; 
+
+    case MENU_SENSOR_TURBIDEZ:
+      if (menuCursor == 0) {
+        // Ver valor actual
+        currentMenu = MENU_SENSORS;
+        menuCursor = 2;
+      } else if (menuCursor == 1) {
+        // Calibrar
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = 0;
+        loadTurbidityCalibration(); // Cargar datos de EEPROM
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSORS;
+        menuCursor = 2;
+      }
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      if (menuCursor < 3) {
+        // Muestra 1, 2 o 3
+        selectedMuestra = menuCursor;
+        currentMenu = MENU_TURB_SET_MUESTRA;
+        turbCalibValue = 0;
+      } else if (menuCursor == 3) {
+        // Calibrar
+        currentMenu = MENU_TURB_CALIBRATING;
+        performTurbidityCalibration();
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSOR_TURBIDEZ;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      currentMenu = MENU_TURB_CONFIRM_MUESTRA;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_MUESTRA:
+      if (menuCursor == 0) {
+        // SI - Guardar
+        saveTurbidityMuestra(selectedMuestra);
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = selectedMuestra;
+      } else {
+        // NO - Volver a editar
+        currentMenu = MENU_TURB_SET_MUESTRA;
+      }
+      break;
 
     case MENU_ACTION:
       if (menuCursor == 0) {
@@ -1840,6 +1950,21 @@ void updateDisplay() {
     case MENU_PH_MANUAL_CO2_ACTIVE:
       displayPhManualCO2Active();
       break;
+    case MENU_SENSOR_TURBIDEZ:
+      displaySensorTurbidezMenu();
+      break;
+    case MENU_TURB_CALIBRATION:
+      displayTurbCalibrationMenu();
+      break;
+    case MENU_TURB_SET_MUESTRA:
+      displayTurbSetMuestra();
+      break;
+    case MENU_TURB_CONFIRM_MUESTRA:
+      displayTurbConfirmMuestra();
+      break;
+    case MENU_TURB_CALIBRATING:
+      displayTurbCalibrating();
+      break;
     case MENU_WEBSERVER:
       displayWebServerMenu();
       break;
@@ -1997,13 +2122,14 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SENSORES:");
   
-  // Siempre mostrar los 3 sensores con sus valores
+  // Temperatura
   lcd.setCursor(0, 1);
   lcd.print(menuCursor == 0 ? "> " : "  ");
   lcd.print("Temp: ");
   lcd.print(temperature, 1);
   lcd.print(" C");
   
+  // pH
   lcd.setCursor(0, 2);
   lcd.print(menuCursor == 1 ? "> " : "  ");
   lcd.print("pH: ");
@@ -2011,10 +2137,15 @@ void displaySensorsMenu() {
   
   lcd.setCursor(0, 3);
   if (menuCursor < 3) {
-    lcd.print(menuCursor == 2 ? "> " : "  ");
-    lcd.print("Turb: ");
-    lcd.print(turbidez, 0);
-    lcd.print(" NTU");
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Turb: ");
+  float turbidityMCmL = getTurbidityConcentration();
+    if (turbidityMCmL >= 0) {
+      lcd.print(turbidityMCmL, 1);
+      lcd.print(" MC/mL");
+    } else {
+      lcd.print("Sin Cal");
+    }
   } else {
     lcd.print("> Atras");
   }
@@ -3291,6 +3422,214 @@ void displayPotenciaMenu() {
     // Indicador para volver
     lcd.setCursor(15, 3);
     lcd.print("<Back");
+}
+
+void displaySensorTurbidezMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SENSOR TURBIDEZ:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Ver valor");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Calibracion");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayTurbCalibrationMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRAR TURBIDEZ:");
+  
+  int startIndex = 0;
+  if (menuCursor > 2) startIndex = menuCursor - 2;
+  if (startIndex > 2) startIndex = 2;
+  
+  const char* opciones[] = {"Muestra 1", "Muestra 2", "Muestra 3", "Calibrar", "Atras"};
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    if (optionIndex < 5) {
+      lcd.setCursor(0, i + 1);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print(opciones[optionIndex]);
+      
+      // Mostrar si hay datos guardados
+      if (optionIndex < 3) {
+        float conc = 0;
+        if (optionIndex == 0) conc = turbMuestra1C;
+        else if (optionIndex == 1) conc = turbMuestra2C;
+        else if (optionIndex == 2) conc = turbMuestra3C;
+        
+        if (conc > 0) {
+          lcd.setCursor(14, i + 1);
+          lcd.print("[OK]");
+        }
+      }
+    }
+  }
+}
+
+void displayTurbSetMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MUESTRA ");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Mostrar voltaje actual
+  float voltage = getTurbidityVoltage();
+  lcd.setCursor(0, 1);
+  lcd.print("Voltaje: ");
+  lcd.print(voltage, 3);
+  lcd.print("V");
+  
+  // Configurar concentración
+  lcd.setCursor(0, 2);
+  lcd.print("MC/mL: ");
+  lcd.print(turbCalibValue);
+  lcd.print("  ");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para guardar");
+}
+
+void displayTurbConfirmMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR MUESTRA?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("V: ");
+  lcd.print(getTurbidityVoltage(), 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("C: ");
+  lcd.print(turbCalibValue);
+  lcd.print(" MC/mL");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayTurbCalibrating() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRANDO...");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Calculando");
+  lcd.setCursor(0, 2);
+  lcd.print("regresion...");
+  
+  delay(1500);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRACION OK!");
+  lcd.setCursor(0, 1);
+  lcd.print("a=");
+  lcd.print(turbCoefA, 2);
+  lcd.setCursor(0, 2);
+  lcd.print("b=");
+  lcd.print(turbCoefB, 2);
+  lcd.setCursor(0, 3);
+  lcd.print("c=");
+  lcd.print(turbCoefC, 2);
+  
+  delay(2000);
+  currentMenu = MENU_TURB_CALIBRATION;
+  menuCursor = 3;
+}
+
+float getTurbidityVoltage() {
+  // TODO: Leer del sensor de turbidez conectado al ADC
+  // Por ahora retorna un valor de prueba
+  int16_t adc = ads.readADC_SingleEnded(3); // Canal A3 del ADS1115
+  float voltage = ads.computeVolts(adc);
+  return voltage;
+}
+
+void saveTurbidityMuestra(int muestra) {
+  float voltage = getTurbidityVoltage();
+  float concentration = (float)turbCalibValue;
+  
+  if (muestra == 0) {
+    turbMuestra1V = voltage;
+    turbMuestra1C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA1_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA1_C, concentration);
+  } else if (muestra == 1) {
+    turbMuestra2V = voltage;
+    turbMuestra2C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA2_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA2_C, concentration);
+  } else if (muestra == 2) {
+    turbMuestra3V = voltage;
+    turbMuestra3C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA3_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA3_C, concentration);
+  }
+  EEPROM.commit();
+}
+
+void loadTurbidityCalibration() {
+  EEPROM.get(EEPROM_TURB_MUESTRA1_V, turbMuestra1V);
+  EEPROM.get(EEPROM_TURB_MUESTRA1_C, turbMuestra1C);
+  EEPROM.get(EEPROM_TURB_MUESTRA2_V, turbMuestra2V);
+  EEPROM.get(EEPROM_TURB_MUESTRA2_C, turbMuestra2C);
+  EEPROM.get(EEPROM_TURB_MUESTRA3_V, turbMuestra3V);
+  EEPROM.get(EEPROM_TURB_MUESTRA3_C, turbMuestra3C);
+  EEPROM.get(EEPROM_TURB_COEF_A, turbCoefA);
+  EEPROM.get(EEPROM_TURB_COEF_B, turbCoefB);
+  EEPROM.get(EEPROM_TURB_COEF_C, turbCoefC);
+}
+
+void performTurbidityCalibration() {
+  // Regresión polinomial de 2do grado: C = a*V^2 + b*V + c
+  // Usando mínimos cuadrados con 3 puntos
+  
+  float x1 = turbMuestra1V, y1 = turbMuestra1C;
+  float x2 = turbMuestra2V, y2 = turbMuestra2C;
+  float x3 = turbMuestra3V, y3 = turbMuestra3C;
+  
+  // Matriz para resolver sistema de ecuaciones
+  float denom = (x1 - x2) * (x1 - x3) * (x2 - x3);
+  
+  if (abs(denom) > 0.001) { // Evitar división por cero
+    turbCoefA = (x3*(y2-y1) + x2*(y1-y3) + x1*(y3-y2)) / denom;
+    turbCoefB = (x3*x3*(y1-y2) + x2*x2*(y3-y1) + x1*x1*(y2-y3)) / denom;
+    turbCoefC = (x2*x3*(x2-x3)*y1 + x3*x1*(x3-x1)*y2 + x1*x2*(x1-x2)*y3) / denom;
+    
+    // Guardar en EEPROM
+    EEPROM.put(EEPROM_TURB_COEF_A, turbCoefA);
+    EEPROM.put(EEPROM_TURB_COEF_B, turbCoefB);
+    EEPROM.put(EEPROM_TURB_COEF_C, turbCoefC);
+    EEPROM.commit();
+  }
+}
+
+float getTurbidityConcentration() {
+  // Si no hay calibración, retornar -1
+  if (turbCoefA == 0 && turbCoefB == 0 && turbCoefC == 0) {
+    return -1;
+  }
+  
+  float voltage = getTurbidityVoltage();
+  float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
+  
+  if (concentration < 0) concentration = 0;
+  if (concentration > 100) concentration = 100;
+  
+  return concentration;
 }
 
 void handleEmergencyState() {
