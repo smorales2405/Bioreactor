@@ -132,6 +132,7 @@ enum MenuState {
   MENU_LLENADO_RESET_CONFIRM,
   MENU_AIREACION,
   MENU_CO2,
+  MENU_POTENCIA,
   MENU_WEBSERVER
 };
 
@@ -297,7 +298,7 @@ void setup() {
   //  lcd.print("OK");
   //}
   
-  delay(5000);
+  delay(15000);
 
   // Inicializar SD
   lcd.setCursor(0, 3);
@@ -982,7 +983,7 @@ void incrementCursor() {
   switch (currentMenu) {
     case MENU_MAIN:
       menuCursor++;
-      if (menuCursor > 5) menuCursor = 0; // Ahora tenemos 3 opciones
+      if (menuCursor > 6) menuCursor = 0; // Ahora tenemos 3 opciones
       break;
       
     case MENU_SENSORS:
@@ -1125,7 +1126,7 @@ void decrementCursor() {
   switch (currentMenu) {
     case MENU_MAIN:
       menuCursor--;
-      if (menuCursor < 0) menuCursor = 5;
+      if (menuCursor < 0) menuCursor = 6;
       break;
       
     case MENU_SENSORS:
@@ -1287,6 +1288,9 @@ void handleSelection() {
       } else if (menuCursor == 4) {
         currentMenu = MENU_CO2;
         menuCursor = 0;
+      } else if (menuCursor == 5) {
+        currentMenu = MENU_POTENCIA;
+        menuCursor = 0;      
       } else {
         currentMenu = MENU_WEBSERVER;
       }
@@ -1796,6 +1800,12 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
     }
     break;
 
+  case MENU_POTENCIA:
+    // Volver al menú principal
+    currentMenu = MENU_MAIN;
+    menuCursor = 5;
+    break;
+
   }
   
   updateDisplay();
@@ -1905,6 +1915,9 @@ void updateDisplay() {
     case MENU_CO2:
       displayCO2Menu();
       break;
+    case MENU_POTENCIA:
+      displayPotenciaMenu();
+      break;
   }
 }
 
@@ -1917,14 +1930,14 @@ void displayMainMenu() {
   int startIndex = 0;
   if (menuCursor > 2) {
     startIndex = menuCursor - 2;
-    if (startIndex > 3) startIndex = 3; // Max 3 para mostrar las últimas 3
+    if (startIndex > 4) startIndex = 4; // Max 3 para mostrar las últimas 3
   }
   
-  const char* opciones[] = {"Sensores", "LEDs", "Llenado", "Aireacion", "Ingreso CO2", "WebServer"};
+  const char* opciones[] = {"Sensores", "LEDs", "Llenado", "Aireacion", "CO2", "Potencia", "WebServer"};
   
   for (int i = 0; i < 3; i++) {
     int optionIndex = startIndex + i;
-    if (optionIndex < 6) {
+    if (optionIndex < 7) {
       lcd.setCursor(0, i + 1);
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
       lcd.print(opciones[optionIndex]);
@@ -3222,6 +3235,62 @@ void checkPhControl() {
       }
     }
   }
+}
+
+// Funciones vacías para obtener los valores
+float getVoltage() {
+    // TODO: Implementar lectura de voltaje
+    return 0.0;
+}
+
+float getCurrent() {
+    // TODO: Implementar lectura de corriente
+    return 0.0;
+}
+
+float getPower() {
+    // TODO: Calcular potencia (V * I)
+    return getVoltage() * getCurrent();
+}
+
+float getConsumption() {
+    // TODO: Calcular consumo acumulado en kWh
+    static float totalKwh = 0.0;
+    return totalKwh;
+}
+
+void displayPotenciaMenu() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("MEDIDOR POTENCIA:");
+    
+    // Mostrar voltaje
+    lcd.setCursor(0, 1);
+    lcd.print("V: ");
+    lcd.print(getVoltage(), 1);
+    lcd.print("V");
+    
+    // Mostrar corriente
+    lcd.setCursor(10, 1);
+    lcd.print("I: ");
+    lcd.print(getCurrent(), 2);
+    lcd.print("A");
+    
+    // Mostrar potencia
+    lcd.setCursor(0, 2);
+    lcd.print("P: ");
+    lcd.print(getPower(), 1);
+    lcd.print("W");
+    
+    // Mostrar consumo
+    lcd.setCursor(0, 3);
+    lcd.print("Consumo: ");
+    lcd.print(getConsumption(), 3);
+    lcd.print(" kWh");
+    
+    // Indicador para volver
+    lcd.setCursor(15, 3);
+    lcd.print("<Back");
 }
 
 void handleEmergencyState() {
