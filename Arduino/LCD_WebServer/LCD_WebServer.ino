@@ -267,14 +267,14 @@ void setup() {
   pcfInput.pinMode(P1, INPUT);
   pcfInput.begin();
 
-  pcfOutput.pinMode(P0, OUTPUT);  // Aireación
-  pcfOutput.pinMode(P1, OUTPUT);  // Bomba de agua
-  pcfOutput.pinMode(P2, OUTPUT);  // Solenoide
-  pcfOutput.pinMode(P3, OUTPUT);  // LEd
-  pcfOutput.digitalWrite(P0, HIGH);
+  pcfOutput.pinMode(P1, OUTPUT);  // Aireación
+  pcfOutput.pinMode(P2, OUTPUT);  // Bomba de agua
+  pcfOutput.pinMode(P3, OUTPUT);  // Solenoide
+  pcfOutput.pinMode(P4, OUTPUT);  // LEd
   pcfOutput.digitalWrite(P1, HIGH);
   pcfOutput.digitalWrite(P2, HIGH);
   pcfOutput.digitalWrite(P3, HIGH);
+  pcfOutput.digitalWrite(P4, HIGH);
   pcfOutput.begin();
 
   // Configurar PWM para cada LED
@@ -736,26 +736,26 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
-    pcfOutput.digitalWrite(P1, LOW);
+    pcfOutput.digitalWrite(P2, LOW);
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = false;
-    pcfOutput.digitalWrite(P1, HIGH);
+    pcfOutput.digitalWrite(P2, HIGH);
     request->send(200, "text/plain", "OK");
   });
 
   // Control de CO2
   server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = true;
-    pcfOutput.digitalWrite(P2, LOW);
+    pcfOutput.digitalWrite(P3, LOW);
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = false;
-    pcfOutput.digitalWrite(P2, HIGH);
+    pcfOutput.digitalWrite(P3, HIGH);
     request->send(200, "text/plain", "OK");
   });
 
@@ -813,7 +813,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     fillingActive = true;
     volumeLlenado = 0.0;
     targetVolume = 9999;
-    pcfOutput.digitalWrite(P0, HIGH);
+    pcfOutput.digitalWrite(P1, LOW);
     request->send(200, "text/plain", "OK");
   });
 
@@ -1755,7 +1755,7 @@ void handleSelection() {
         fillingActive = true;
         volumeLlenado = 0.0;
         targetVolume = 9999; // Valor alto para que no se detenga
-        pcfOutput.digitalWrite(P0, HIGH);
+        pcfOutput.digitalWrite(P1, LOW);
         currentMenu = MENU_LLENADO_ACTIVE;
       } else {
         // Si ya está activa, ir a pantalla de control
@@ -1823,11 +1823,11 @@ void handleSelection() {
         if (emergencyActive) return;
         // Encender
         aireacionActive = true;
-        pcfOutput.digitalWrite(P0, LOW);
+        pcfOutput.digitalWrite(P2, LOW);
       } else if (menuCursor == 1) {
         // Apagar
         aireacionActive = false;
-        pcfOutput.digitalWrite(P0, HIGH);
+        pcfOutput.digitalWrite(P2, HIGH);
       } else {
         // Atrás
         currentMenu = MENU_MAIN;
@@ -1898,11 +1898,11 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
     if (menuCursor == 0) {
       // Encender
       co2Active = true;
-      pcfOutput.digitalWrite(P2, LOW);
+      pcfOutput.digitalWrite(P3, LOW);
     } else if (menuCursor == 1) {
       // Apagar
       co2Active = false;
-      pcfOutput.digitalWrite(P2, HIGH);
+      pcfOutput.digitalWrite(P3, HIGH);
     } else {
       // Atrás
       currentMenu = MENU_MAIN;
@@ -3327,13 +3327,13 @@ void startCO2Injection() {
   co2InjectionActive = true;
   co2MinutesRemaining = co2MinutesSet;
   co2StartTime = millis();
-  pcfOutput.digitalWrite(P2, LOW); // Activar CO2
+  pcfOutput.digitalWrite(P3, LOW); // Activar CO2
 }
 
 void stopCO2Injection() {
   co2InjectionActive = false;
   co2MinutesRemaining = 0;
-  pcfOutput.digitalWrite(P2, HIGH); // Desactivar CO2
+  pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
 }
 
 void updateCO2Time() {
@@ -3356,13 +3356,13 @@ void checkPhControl() {
       // pH alcalino - activar CO2
       if (!co2Active) {
         co2Active = true;
-        pcfOutput.digitalWrite(P2, LOW);
+        pcfOutput.digitalWrite(P3, LOW);
       }
     } else if (phValue <= phLimitSet) {
       // pH en rango - desactivar CO2
       if (co2Active) {
         co2Active = false;
-        pcfOutput.digitalWrite(P2, HIGH);
+        pcfOutput.digitalWrite(P3, HIGH);
       }
     }
   }
@@ -3642,7 +3642,7 @@ void handleEmergencyState() {
     
     // Apagar todas las salidas
     for (int i = 0; i < 4; i++) {
-      pcfOutput.digitalWrite(i, LOW);  // P0 a P3
+      pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
       ledcWrite(ledPins[i], 0);        // LEDs PWM
     }
     
