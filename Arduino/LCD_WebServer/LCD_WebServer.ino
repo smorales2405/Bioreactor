@@ -1704,7 +1704,7 @@ void handleSelection() {
       pwmValues[selectedLed] = menuCursor;
       ledStates[selectedLed] = (menuCursor > 0);
       //int pwmValue = map(intensity, 0, 100, 0, 255);
-      ledcWrite(ledPins[selectedLed], pwmValues[selectedLed]);
+      ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
       break;
