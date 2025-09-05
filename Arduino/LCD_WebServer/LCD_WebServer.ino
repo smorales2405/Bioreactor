@@ -1268,7 +1268,7 @@ void decrementCursor() {
       break;
       
     case MENU_INTENSITY:
-      if (menuCursor > 0) {
+      if (menuCursor >= 0) {
         menuCursor--;
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -1562,7 +1562,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentMenu = MENU_INTENSITY;
-          menuCursor = pwmValues[selectedLed] * 2;
+          menuCursor = 0;
         }
       }
       break;
