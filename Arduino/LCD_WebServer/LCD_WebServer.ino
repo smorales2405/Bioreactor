@@ -243,6 +243,9 @@ DateTime sequenceStartTime;
 DateTime stepStartTime;
 volatile bool rtcInterrupt = false;
 
+//Encoder
+volatile int8_t last_state = 0, current_state = 0;
+
 // === Configuración PWM ===
 const int pwmFreq = 5000;
 const int pwmResolution = 8;
@@ -296,7 +299,9 @@ void setup() {
   
   // Configurar pines
   pinMode(ENCODER_CLK, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), handleEncoder, CHANGE);
   pinMode(ENCODER_DT, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), handleEncoder, CHANGE);
   pinMode(ENCODER_SW, INPUT_PULLUP);
   pinMode(SQW_PIN, INPUT_PULLUP);
   pinMode(FLOW_SENSOR_PIN, INPUT);
@@ -884,18 +889,51 @@ void readSensors() {
 }
 
 void handleEncoder() {
-  int clkState = digitalRead(ENCODER_CLK);
+  //int clkState = digitalRead(ENCODER_CLK);
   
-  if (clkState != lastClk && clkState == LOW) {
-    if (digitalRead(ENCODER_DT) != clkState) {
-      incrementCursor();
-    } else {
-      decrementCursor();
-    }
+  //if (clkState != lastClk && clkState == LOW) {
+  //  if (digitalRead(ENCODER_DT) != clkState) {
+  //    incrementCursor();
+  //  } else {
+  //    decrementCursor();
+  //  }
+  //  updateDisplay();
+  //}
+  
+  //lastClk = clkState;
+
+  if(digitalRead(ENCODER_CLK)==1)
+    bitSet(current_state,1);
+  else
+    bitClear(current_state,1);
     updateDisplay();
-  }
-  
-  lastClk = clkState;
+    
+  if(digitalRead(ENCODER_DT)==1)
+    bitSet(current_state,0);
+  else
+    bitClear(current_state,0);
+    updateDisplay();
+
+  if(last_state==3 && current_state==1)
+    incrementCursor();
+  if(last_state==1 && current_state==0) 
+    incrementCursor();
+  if(last_state==0 && current_state==2)
+    incrementCursor();
+  if(last_state==2 && current_state==3)
+    incrementCursor();   
+      
+  if(last_state==3 && current_state==2)
+    decrementCursor();
+  if(last_state==2 && current_state==0)
+    decrementCursor();
+  if(last_state==0 && current_state==1)
+    decrementCursor();
+  if(last_state==1 && current_state==3)
+    decrementCursor();
+    
+  last_state = current_state; 
+
 }
 
 void handleButtons() {
