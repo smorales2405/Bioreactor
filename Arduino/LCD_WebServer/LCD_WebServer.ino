@@ -1570,21 +1570,21 @@ void handleSelection() {
     case MENU_ONOFF:
       if (menuCursor == 0) {
         // ON - Cambiar estas líneas
-        ledStates[selectedAction] = true;
-        pwmValues[selectedAction] = 10;  // AGREGAR ESTA LÍNEA
-        ledcWrite(ledPins[selectedAction], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
+        //ledStates[selectedLed] = true;
+        //pwmValues[selectedLed] = 10;  // AGREGAR ESTA LÍNEA
+        ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
       } else {
         // OFF
-        ledStates[selectedAction] = false;
-        pwmValues[selectedAction] = 0;
-        ledcWrite(ledPins[selectedAction], 0);
+        //ledStates[selectedLed] = false;
+        //pwmValues[selectedLed] = 0;
+        ledcWrite(ledPins[selectedLed], 0);
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
       break;
       
     case MENU_INTENSITY:
-      pwmValues[selectedLed] = (menuCursor + 1) / 2;
+      pwmValues[selectedLed] = menuCursor;
       ledStates[selectedLed] = (menuCursor > 0);
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
@@ -2354,7 +2354,7 @@ void displayLedSelectMenu() {
       
       if (ledStates[optionIndex]) {
         lcd.setCursor(10, i + 1);
-        if (pwmValues[optionIndex] == 10) {
+        if (pwmValues[optionIndex] == 20) {
           lcd.print("[ON]");
         } else {
           lcd.print("[");
@@ -2380,7 +2380,7 @@ void displayOnOffMenu() {
   
   lcd.setCursor(14, 0);
   if (ledStates[selectedLed]) {
-    if (pwmValues[selectedLed] == 10) {
+    if (pwmValues[selectedLed] == 20) {
       lcd.print("[ON]");
     } else {
       lcd.print("[");
@@ -2818,7 +2818,7 @@ void setLED(int index, bool state, int intensity) {
   if (index < 0 || index >= numLeds) return;
   
   ledStates[index] = state;
-  pwmValues[index] = intensity / 10; // Convertir de 0-100 a 0-10 para consistencia con LCD
+  pwmValues[index] = intensity / 5; // Convertir de 0-100 a 0-10 para consistencia con LCD
   
   int pwmValue = map(intensity, 0, 100, 0, 255);
   ledcWrite(ledPins[index], state ? pwmValue : 0);
