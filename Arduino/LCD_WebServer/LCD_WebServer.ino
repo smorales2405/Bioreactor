@@ -889,7 +889,7 @@ void readSensors() {
 }
 
 void handleEncoder() {
-  //int clkState = digitalRead(ENCODER_CLK);
+  int clkState = digitalRead(ENCODER_CLK);
   
   //if (clkState != lastClk && clkState == LOW) {
   //  if (digitalRead(ENCODER_DT) != clkState) {
@@ -902,17 +902,19 @@ void handleEncoder() {
   
   //lastClk = clkState;
 
-  if(digitalRead(ENCODER_CLK)==1)
+  if(digitalRead(ENCODER_CLK)==HIGH)
     bitSet(current_state,1);
   else
     bitClear(current_state,1);
-    updateDisplay();
-    
-  if(digitalRead(ENCODER_DT)==1)
+  
+  if(digitalRead(ENCODER_DT)==HIGH)
     bitSet(current_state,0);
   else
     bitClear(current_state,0);
+
+  if (clkState != lastClk && clkState == LOW) {
     updateDisplay();
+  }
 
   if(last_state==3 && current_state==1)
     incrementCursor();
@@ -932,7 +934,8 @@ void handleEncoder() {
   if(last_state==1 && current_state==3)
     decrementCursor();
     
-  last_state = current_state; 
+  last_state = current_state;
+  lastClk = clkState 
 
 }
 
