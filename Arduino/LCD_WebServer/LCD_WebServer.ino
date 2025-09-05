@@ -202,7 +202,7 @@ int menuCursor = 0;
 // === Variables de sensores ===
 float temperature = 0.0;
 float phValue = 0.0;
-float turbidez = 0.0;
+float turbidityMCmL = 0.0;
 unsigned long lastSensorRead = 0;
 const unsigned long sensorReadInterval = 1000;
 
@@ -518,7 +518,7 @@ void setupWebServer() {
     String json = "{";
     json += "\"temperature\":" + String(temperature, 1) + ",";
     json += "\"ph\":" + String(phValue, 2) + ",";
-    json += "\"turbidity\":" + String(turbidez, 0);
+    json += "\"turbidity\":" + String(turbidityMCmL, 0);
     json += "}";
     request->send(200, "application/json", json);
   });
@@ -877,14 +877,9 @@ void readSensors() {
   temperature = thermo.temperature(RNOMINAL, RREF);
   
   // Leer turbidez (AIN0)
-  int16_t raw_turbidez = ads.readADC_SingleEnded(0);
-  float voltage_turbidez = ads.computeVolts(raw_turbidez);
-  turbidez = -1120.4 * voltage_turbidez * voltage_turbidez + 5742.3 * voltage_turbidez - 4352.9;
-  if (turbidez < 0) turbidez = 0;
-  if (turbidez > 3000) turbidez = 3000;
+  turbidityMCmL = getTurbidityConcentration();
   
-  // Leer pH (AIN1)
-  int16_t raw_ph = ads.readADC_SingleEnded(1);
+  // Leer pH
   phValue = getPhValueCalibrated();
 }
 
@@ -2397,7 +2392,6 @@ void displaySensorsMenu() {
   if (menuCursor < 3) {
   lcd.print(menuCursor == 2 ? "> " : "  ");
   lcd.print("Turb: ");
-  float turbidityMCmL = getTurbidityConcentration();
     if (turbidityMCmL >= 0) {
       lcd.print(turbidityMCmL, 1);
       lcd.print(" MC/mL");
@@ -3808,7 +3802,7 @@ void displayTurbCalibrating() {
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
   // Por ahora retorna un valor de prueba
-  int16_t adc = ads.readADC_SingleEnded(3); // Canal A3 del ADS1115
+  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
   float voltage = ads.computeVolts(adc);
   return voltage;
 }
