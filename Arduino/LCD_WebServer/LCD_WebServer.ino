@@ -615,7 +615,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     for (int i = 0; i < numLeds; i++) {
       json += "\"" + String(ledNamesWeb[i]) + "\":{";
       json += "\"state\":" + String(ledStates[i] ? "true" : "false") + ",";
-      json += "\"intensity\":" + String(pwmValues[i] * 10); // Convertir de 0-10 a 0-100
+      json += "\"intensity\":" + String(pwmValues[i] * 5); // Convertir de 0-10 a 0-100
       json += "}";
       if (i < numLeds - 1) json += ",";
     }
