@@ -120,6 +120,8 @@ float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
 float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
 int turbCalibValue = 0;  // Valor temporal para calibración
 int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
+float tempVoltageReading = 0.0; // Voltaje temporal actual
+int tempConcentrationValue = 0; // Concentración temporal para editar
 
 // Variables para calibración de pH
 float phMuestra1V = 0.0, phMuestra1pH = 0.0;
@@ -153,6 +155,11 @@ enum MenuState {
   MENU_TURB_SET_MUESTRA,
   MENU_TURB_CONFIRM_MUESTRA,
   MENU_TURB_CALIBRATING,
+  MENU_TURB_MUESTRA_DETAIL,
+  MENU_TURB_SET_VOLTAGE,
+  MENU_TURB_CONFIRM_VOLTAGE,
+  MENU_TURB_SET_CONCENTRATION,
+  MENU_TURB_CONFIRM_CONCENTRATION,
   MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
   MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
   MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
@@ -1029,6 +1036,24 @@ void incrementCursor() {
       if (turbCalibValue < 100) turbCalibValue++;
       break;
 
+    case MENU_TURB_MUESTRA_DETAIL:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_TURB_SET_VOLTAGE:
+      // No se puede navegar, solo visualizar
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      if (tempConcentrationValue < 100) tempConcentrationValue++;
+      break;
+
+    case MENU_TURB_CONFIRM_VOLTAGE:
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_TURB_CONFIRM_MUESTRA:
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
@@ -1214,6 +1239,15 @@ void decrementCursor() {
       if (turbCalibValue > 0) turbCalibValue--;
       break;
 
+    case MENU_TURB_MUESTRA_DETAIL:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      if (tempConcentrationValue > 0) tempConcentrationValue--;
+      break;
+
     case MENU_ACTION:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
@@ -1318,6 +1352,22 @@ void decrementCursor() {
     case MENU_CO2:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 2; // 3 opciones
+      break;
+
+    case MENU_ALMACENAR:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 4; // 5 opciones (4 tipos + atrás)
+      break;
+
+    case MENU_ALMACENAR_TYPE:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones (Almacenar, Detener, Borrar)
+      break;
+
+    case MENU_ALMACENAR_CONFIRM_START:
+    case MENU_ALMACENAR_CONFIRM_STOP:
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
 
   }
@@ -1497,10 +1547,10 @@ void handleSelection() {
 
     case MENU_TURB_CALIBRATION:
       if (menuCursor < 3) {
-        // Muestra 1, 2 o 3
+        // Muestra 1, 2 o 3 - ahora va a detalle
         selectedMuestra = menuCursor;
-        currentMenu = MENU_TURB_SET_MUESTRA;
-        turbCalibValue = 0;
+        currentMenu = MENU_TURB_MUESTRA_DETAIL;
+        menuCursor = 0;
       } else if (menuCursor == 3) {
         // Calibrar
         currentMenu = MENU_TURB_CALIBRATING;
@@ -1527,6 +1577,73 @@ void handleSelection() {
         // NO - Volver a editar
         currentMenu = MENU_TURB_SET_MUESTRA;
       }
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      if (menuCursor == 0) {
+        // Editar Voltaje
+        currentMenu = MENU_TURB_SET_VOLTAGE;
+        tempVoltageReading = getTurbidityVoltage();
+      } else if (menuCursor == 1) {
+        // Editar Concentración
+        currentMenu = MENU_TURB_SET_CONCENTRATION;
+        // Cargar valor actual si existe
+        if (selectedMuestra == 0) tempConcentrationValue = (int)turbMuestra1C;
+        else if (selectedMuestra == 1) tempConcentrationValue = (int)turbMuestra2C;
+        else if (selectedMuestra == 2) tempConcentrationValue = (int)turbMuestra3C;
+      } else {
+        // Atrás
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = selectedMuestra;
+      }
+      break;
+
+    case MENU_TURB_SET_VOLTAGE:
+      currentMenu = MENU_TURB_CONFIRM_VOLTAGE;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_VOLTAGE:
+      if (menuCursor == 0) {
+        // SI - Guardar voltaje actual
+        if (selectedMuestra == 0) {
+          turbMuestra1V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA1_V, turbMuestra1V);
+        } else if (selectedMuestra == 1) {
+          turbMuestra2V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA2_V, turbMuestra2V);
+        } else if (selectedMuestra == 2) {
+          turbMuestra3V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA3_V, turbMuestra3V);
+        }
+        EEPROM.commit();
+      }
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 0;
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      currentMenu = MENU_TURB_CONFIRM_CONCENTRATION;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      if (menuCursor == 0) {
+        // SI - Guardar concentración
+        if (selectedMuestra == 0) {
+          turbMuestra1C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA1_C, turbMuestra1C);
+        } else if (selectedMuestra == 1) {
+          turbMuestra2C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA2_C, turbMuestra2C);
+        } else if (selectedMuestra == 2) {
+          turbMuestra3C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA3_C, turbMuestra3C);
+        }
+        EEPROM.commit();
+      }
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 1;
       break;
 
     case MENU_ACTION:
@@ -2075,6 +2192,21 @@ void updateDisplay() {
       break;
     case MENU_TURB_CALIBRATING:
       displayTurbCalibrating();
+      break;
+    case MENU_TURB_MUESTRA_DETAIL:
+      displayTurbMuestraDetail();
+      break;
+    case MENU_TURB_SET_VOLTAGE:
+      displayTurbSetVoltage();
+      break;
+    case MENU_TURB_CONFIRM_VOLTAGE:
+      displayTurbConfirmVoltage();
+      break;
+    case MENU_TURB_SET_CONCENTRATION:
+      displayTurbSetConcentration();
+      break;
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      displayTurbConfirmConcentration();
       break;
     case MENU_WEBSERVER:
       displayWebServerMenu();
@@ -3581,16 +3713,18 @@ void displayTurbCalibrationMenu() {
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
       lcd.print(opciones[optionIndex]);
       
-      // Mostrar si hay datos guardados
+      // Mostrar si hay datos completos
       if (optionIndex < 3) {
-        float conc = 0;
-        if (optionIndex == 0) conc = turbMuestra1C;
-        else if (optionIndex == 1) conc = turbMuestra2C;
-        else if (optionIndex == 2) conc = turbMuestra3C;
+        float v = 0, c = 0;
+        if (optionIndex == 0) { v = turbMuestra1V; c = turbMuestra1C; }
+        else if (optionIndex == 1) { v = turbMuestra2V; c = turbMuestra2C; }
+        else if (optionIndex == 2) { v = turbMuestra3V; c = turbMuestra3C; }
         
-        if (conc > 0) {
-          lcd.setCursor(14, i + 1);
+        lcd.setCursor(14, i + 1);
+        if (v > 0 && c > 0) {
           lcd.print("[OK]");
+        } else if (v > 0 || c > 0) {
+          lcd.print("[..]");
         }
       }
     }
@@ -4141,6 +4275,162 @@ void checkDataLogging() {
     }
   }
 }
+
+void displayTurbMuestraDetail() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MUESTRA ");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Obtener valores guardados
+  float storedV = 0, storedC = 0;
+  if (selectedMuestra == 0) {
+    storedV = turbMuestra1V;
+    storedC = turbMuestra1C;
+  } else if (selectedMuestra == 1) {
+    storedV = turbMuestra2V;
+    storedC = turbMuestra2C;
+  } else if (selectedMuestra == 2) {
+    storedV = turbMuestra3V;
+    storedC = turbMuestra3C;
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("V: ");
+  if (storedV > 0) {
+    lcd.print(storedV, 3);
+    lcd.print("V");
+  } else {
+    lcd.print("---");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("C: ");
+  if (storedC > 0) {
+    lcd.print((int)storedC);
+    lcd.print(" MC/mL");
+  } else {
+    lcd.print("---");
+  }
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayTurbSetVoltage() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("VOLTAJE M");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Valor almacenado
+  float storedV = 0;
+  if (selectedMuestra == 0) storedV = turbMuestra1V;
+  else if (selectedMuestra == 1) storedV = turbMuestra2V;
+  else if (selectedMuestra == 2) storedV = turbMuestra3V;
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Guardado: ");
+  if (storedV > 0) {
+    lcd.print(storedV, 3);
+    lcd.print("V");
+  } else {
+    lcd.print("---");
+  }
+  
+  // Valor actual
+  lcd.setCursor(0, 2);
+  lcd.print("Actual: ");
+  lcd.print(tempVoltageReading, 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para guardar");
+}
+
+void displayTurbConfirmVoltage() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR VOLTAJE?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Muestra ");
+  lcd.print(selectedMuestra + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("V: ");
+  lcd.print(tempVoltageReading, 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayTurbSetConcentration() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONCENTR. M");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Valor almacenado
+  float storedC = 0;
+  if (selectedMuestra == 0) storedC = turbMuestra1C;
+  else if (selectedMuestra == 1) storedC = turbMuestra2C;
+  else if (selectedMuestra == 2) storedC = turbMuestra3C;
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Guardado: ");
+  if (storedC > 0) {
+    lcd.print((int)storedC);
+    lcd.print(" MC/mL");
+  } else {
+    lcd.print("---");
+  }
+  
+  // Valor a configurar
+  lcd.setCursor(0, 2);
+  lcd.print("Nuevo: ");
+  lcd.print(tempConcentrationValue);
+  lcd.print(" MC/mL");
+  
+  // Barra visual
+  lcd.setCursor(0, 3);
+  lcd.print("[");
+  int barLength = map(tempConcentrationValue, 0, 100, 0, 16);
+  for (int i = 0; i < 16; i++) {
+    if (i < barLength) lcd.print("=");
+    else lcd.print(" ");
+  }
+  lcd.print("]");
+}
+
+void displayTurbConfirmConcentration() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR CONC.?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Muestra ");
+  lcd.print(selectedMuestra + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("C: ");
+  lcd.print(tempConcentrationValue);
+  lcd.print(" MC/mL");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+
 
 void handleEmergencyState() {
   static bool lastEmergencyState = false;
