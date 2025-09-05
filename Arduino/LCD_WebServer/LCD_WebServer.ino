@@ -128,6 +128,15 @@ float phCoefM = 0.0, phCoefB = 0.0;
 int phCalibValue = 7;  // Valor temporal para calibración (iniciar en pH neutro)
 int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
 
+// Variables para almacenamiento de datos
+bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
+unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
+unsigned long logInterval = 300000; // 5 minutos en milisegundos (configurable)
+int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
+
+// Direcciones EEPROM para configuración de logging
+#define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
+
 // === Estados del menú ===
 enum MenuState {
   MENU_MAIN,           
@@ -172,7 +181,12 @@ enum MenuState {
   MENU_AIREACION,
   MENU_CO2,
   MENU_POTENCIA,
-  MENU_WEBSERVER
+  MENU_WEBSERVER,
+  MENU_ALMACENAR,
+  MENU_ALMACENAR_TYPE,
+  MENU_ALMACENAR_CONFIRM_START,
+  MENU_ALMACENAR_CONFIRM_STOP,
+  MENU_ALMACENAR_CONFIRM_DELETE,
 };
 
 MenuState currentMenu = MENU_MAIN;
@@ -257,6 +271,11 @@ void setup() {
   volumeTotal = 0.0;
   }
   
+  EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
+  if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
+    logInterval = 300000; // 5 minutos por defecto
+  }
+
   // Inicializar I2C y LCD
   Wire.begin();
   lcd.init();
@@ -420,6 +439,7 @@ void loop() {
   updateFlowMeasurement();
   updateCO2Time();
   checkPhControl();
+  checkDataLogging();
   
   // Si la secuencia está ejecutándose, verificar el tiempo
   if (sequenceRunning && rtcInterrupt) {
@@ -939,6 +959,12 @@ void handleExtraButton() {
       menuCursor = 1;
       updateDisplay();
       break;
+
+    case MENU_AIREACION:
+      currentMenu = MENU_MAIN;
+      menuCursor = 3;
+      updateDisplay();
+      break;
   }
 }
 
@@ -946,7 +972,7 @@ void incrementCursor() {
   switch (currentMenu) {
     case MENU_MAIN:
       menuCursor++;
-      if (menuCursor > 6) menuCursor = 0; // Ahora tenemos 3 opciones
+      if (menuCursor > 7) menuCursor = 0; // Ahora tenemos 3 opciones
       break;
       
     case MENU_SENSORS:
@@ -1107,6 +1133,22 @@ void incrementCursor() {
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // 3 opciones
       break;  
+    
+    case MENU_ALMACENAR:
+      menuCursor++;
+      if (menuCursor > 4) menuCursor = 0; // 5 opciones (4 tipos + atrás)
+      break;
+
+    case MENU_ALMACENAR_TYPE:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_ALMACENAR_CONFIRM_START:
+    case MENU_ALMACENAR_CONFIRM_STOP:
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
 
   }
 }
@@ -1302,6 +1344,9 @@ void handleSelection() {
       } else if (menuCursor == 5) {
         currentMenu = MENU_POTENCIA;
         menuCursor = 0;      
+      } else if (menuCursor == 6) {
+        currentMenu = MENU_ALMACENAR;
+        menuCursor = 0;
       } else {
         currentMenu = MENU_WEBSERVER;
       }
@@ -1885,6 +1930,92 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
     menuCursor = 5;
     break;
 
+  case MENU_ALMACENAR:
+  if (menuCursor < 4) {
+    // Tipo 1-4
+    selectedDataType = menuCursor;
+    currentMenu = MENU_ALMACENAR_TYPE;
+    menuCursor = 0;
+  } else {
+    // Atrás
+    currentMenu = MENU_MAIN;
+    menuCursor = 6;
+  }
+  break;
+
+  case MENU_ALMACENAR_TYPE:
+    if (menuCursor == 0) {
+      // Almacenar
+      if (!dataLogging[selectedDataType]) {
+        currentMenu = MENU_ALMACENAR_CONFIRM_START;
+        menuCursor = 1; // Por defecto en NO
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Ya esta");
+        lcd.setCursor(0, 2);
+        lcd.print("almacenando!");
+        delay(1500);
+      }
+    } else if (menuCursor == 1) {
+      // Detener
+      if (dataLogging[selectedDataType]) {
+        currentMenu = MENU_ALMACENAR_CONFIRM_STOP;
+        menuCursor = 1;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("No hay datos");
+        lcd.setCursor(0, 2);
+        lcd.print("almacenandose");
+        delay(1500);
+      }
+    } else {
+      // Borrar
+      currentMenu = MENU_ALMACENAR_CONFIRM_DELETE;
+      menuCursor = 1;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_START:
+    if (menuCursor == 0) {
+      // SI - Iniciar almacenamiento
+      startDataLogging(selectedDataType);
+      currentMenu = MENU_MAIN;
+      menuCursor = 0;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 0;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_STOP:
+    if (menuCursor == 0) {
+      // SI - Detener almacenamiento
+      stopDataLogging(selectedDataType);
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 1;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 1;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_DELETE:
+    if (menuCursor == 0) {
+      // SI - Borrar datos
+      deleteDataLog(selectedDataType);
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 2;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 2;
+    }
+    break;
+
   }
   
   updateDisplay();
@@ -2021,6 +2152,21 @@ void updateDisplay() {
     case MENU_POTENCIA:
       displayPotenciaMenu();
       break;
+    case MENU_ALMACENAR:
+      displayAlmacenarMenu();
+      break;
+    case MENU_ALMACENAR_TYPE:
+      displayAlmacenarTypeMenu();
+      break;
+    case MENU_ALMACENAR_CONFIRM_START:
+      displayAlmacenarConfirmStart();
+      break;
+    case MENU_ALMACENAR_CONFIRM_STOP:
+      displayAlmacenarConfirmStop();
+      break;
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      displayAlmacenarConfirmDelete();
+      break;
   }
 }
 
@@ -2036,11 +2182,11 @@ void displayMainMenu() {
     if (startIndex > 4) startIndex = 4; // Max 3 para mostrar las últimas 3
   }
   
-  const char* opciones[] = {"Sensores", "LEDs", "Llenado", "Aireacion", "CO2", "Potencia", "WebServer"};
+  const char* opciones[] = {"Sensores", "LEDs", "Llenado", "Aireacion", "CO2", "Potencia", "Almacenar","WebServer"};
   
   for (int i = 0; i < 3; i++) {
     int optionIndex = startIndex + i;
-    if (optionIndex < 7) {
+    if (optionIndex < 8) {
       lcd.setCursor(0, i + 1);
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
       lcd.print(opciones[optionIndex]);
@@ -3798,6 +3944,200 @@ float getPhValueCalibrated() {
   if (ph > 14) ph = 14;
   
   return ph;
+}
+
+void displayAlmacenarMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALMACENAR DATOS:");
+  
+  int startIndex = 0;
+  if (menuCursor > 2) startIndex = menuCursor - 2;
+  if (startIndex > 2) startIndex = 2;
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    if (optionIndex < 5) {
+      lcd.setCursor(0, i + 1);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      
+      if (optionIndex < 4) {
+        lcd.print("Tipo ");
+        lcd.print(optionIndex + 1);
+        
+        // Mostrar si está activo
+        if (dataLogging[optionIndex]) {
+          lcd.setCursor(14, i + 1);
+          lcd.print("[REC]");
+        }
+      } else {
+        lcd.print("Atras");
+      }
+    }
+  }
+}
+
+void displayAlmacenarTypeMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("TIPO ");
+  lcd.print(selectedDataType + 1);
+  lcd.print(":");
+  
+  if (dataLogging[selectedDataType]) {
+    lcd.print(" [REC]");
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Almacenar");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Detener");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Borrar");
+}
+
+void displayAlmacenarConfirmStart() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INICIAR GUARDADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Intervalo: ");
+  lcd.print(logInterval / 60000);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayAlmacenarConfirmStop() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("DETENER GUARDADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayAlmacenarConfirmDelete() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("BORRAR DATOS?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("IRREVERSIBLE!");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void startDataLogging(int type) {
+  dataLogging[type] = true;
+  lastLogTime[type] = millis();
+  
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("Iniciando");
+  lcd.setCursor(0, 2);
+  lcd.print("almacenamiento...");
+  delay(1500);
+}
+
+void stopDataLogging(int type) {
+  dataLogging[type] = false;
+  
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("Almacenamiento");
+  lcd.setCursor(0, 2);
+  lcd.print("detenido");
+  delay(1500);
+}
+
+void deleteDataLog(int type) {
+  String filename = "/tipo" + String(type + 1) + ".json";
+  
+  if (SD.exists(filename)) {
+    SD.remove(filename);
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Datos borrados");
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("No hay datos");
+  }
+  delay(1500);
+}
+
+void saveDataToSD(int type) {
+  String filename = "/tipo" + String(type + 1) + ".json";
+  File dataFile = SD.open(filename, FILE_APPEND);
+  
+  if (dataFile) {
+    // Crear objeto JSON
+    StaticJsonDocument<512> doc;
+    
+    // Obtener fecha y hora
+    DateTime now = rtc.now();
+    char dateTime[20];
+    sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", 
+            now.year(), now.month(), now.day(),
+            now.hour(), now.minute(), now.second());
+    
+    doc["timestamp"] = dateTime;
+    doc["tipo"] = type + 1;
+    doc["temperatura"] = temperature;
+    doc["turbidez"] = getTurbidityConcentration();
+    doc["pH"] = phValue;
+    doc["aireacion"] = aireacionActive ? "ON" : "OFF";
+    doc["CO2"] = co2Active ? "ON" : "OFF";
+    
+    // LEDs status
+    JsonObject leds = doc.createNestedObject("leds");
+    leds["blanco"] = map(pwmValues[0], 0, 100, 0, 255);
+    leds["rojo"] = map(pwmValues[1], 0, 100, 0, 255);
+    leds["verde"] = map(pwmValues[2], 0, 100, 0, 255);
+    leds["azul"] = map(pwmValues[3], 0, 100, 0, 255);
+    
+    // Escribir JSON al archivo
+    serializeJson(doc, dataFile);
+    dataFile.println(","); // Separador para múltiples objetos JSON
+    dataFile.close();
+  }
+}
+
+void checkDataLogging() {
+  unsigned long currentTime = millis();
+  
+  for (int i = 0; i < 4; i++) {
+    if (dataLogging[i]) {
+      if (currentTime - lastLogTime[i] >= logInterval) {
+        saveDataToSD(i);
+        lastLogTime[i] = currentTime;
+      }
+    }
+  }
 }
 
 void handleEmergencyState() {
