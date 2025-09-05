@@ -1562,7 +1562,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentMenu = MENU_INTENSITY;
-          menuCursor = 0;
+          menuCursor = pwmValues[selectedLed];
         }
       }
       break;
@@ -1586,6 +1586,8 @@ void handleSelection() {
     case MENU_INTENSITY:
       pwmValues[selectedLed] = menuCursor;
       ledStates[selectedLed] = (menuCursor > 0);
+      //int pwmValue = map(intensity, 0, 100, 0, 255);
+      ledcWrite(ledPins[selectedLed], pwmValues[selectedLed]);
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
       break;
@@ -2358,8 +2360,8 @@ void displayLedSelectMenu() {
           lcd.print("[ON]");
         } else {
           lcd.print("[");
-          lcd.print(pwmValues[optionIndex]);
-          lcd.print("]");
+          lcd.print(pwmValues[optionIndex]*5);
+          lcd.print("%]");
         }
       } else {
         lcd.setCursor(10, i + 1);
@@ -2384,8 +2386,8 @@ void displayOnOffMenu() {
       lcd.print("[ON]");
     } else {
       lcd.print("[");
-      lcd.print(pwmValues[selectedLed]);
-      lcd.print("]");
+      lcd.print(pwmValues[selectedLed]*5);
+      lcd.print("%]");
     }
   } else {
     lcd.print("[OFF]");
@@ -2421,7 +2423,7 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 2);
   lcd.print("[");
-  int barLength = map(menuCursor, 0, 20, 0, 18);  // 20 pasos de 5% = 100%
+  int barLength = map(menuCursor, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
   for (int i = 0; i < 18; i++) {
     if (i < barLength) {
       lcd.print("=");
