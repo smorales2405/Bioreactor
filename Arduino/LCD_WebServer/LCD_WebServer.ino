@@ -243,8 +243,10 @@ DateTime sequenceStartTime;
 DateTime stepStartTime;
 volatile bool rtcInterrupt = false;
 
-//Encoder
-volatile int8_t last_state = 0, current_state = 0;
+// Variables para encoder con interrupciones
+volatile int encoderPos = 0;
+volatile uint8_t encoderLastState = 0;
+volatile bool encoderChanged = false;
 
 // === Configuración PWM ===
 const int pwmFreq = 5000;
@@ -265,6 +267,37 @@ void IRAM_ATTR contarPulso() {
 
 void IRAM_ATTR handleEmergency() {
   emergencyActive = true;
+}
+
+void IRAM_ATTR readEncoder() {
+    uint8_t currentState = 0;
+    
+    // Leer estado actual de los pines
+    if(digitalRead(ENCODER_CLK) == HIGH)
+        bitSet(currentState, 1);
+    else
+        bitClear(currentState, 1);
+    
+    if(digitalRead(ENCODER_DT) == HIGH)
+        bitSet(currentState, 0);
+    else
+        bitClear(currentState, 0);
+    
+    // Detectar dirección basado en transición de estados
+    // Rotación horaria
+    if(encoderLastState == 3 && currentState == 1) encoderPos++;
+    if(encoderLastState == 1 && currentState == 0) encoderPos++;
+    if(encoderLastState == 0 && currentState == 2) encoderPos++;
+    if(encoderLastState == 2 && currentState == 3) encoderPos++;
+    
+    // Rotación antihoraria
+    if(encoderLastState == 3 && currentState == 2) encoderPos--;
+    if(encoderLastState == 2 && currentState == 0) encoderPos--;
+    if(encoderLastState == 0 && currentState == 1) encoderPos--;
+    if(encoderLastState == 1 && currentState == 3) encoderPos--;
+    
+    encoderLastState = currentState;
+    encoderChanged = true;
 }
 
 void setup() {
@@ -299,9 +332,9 @@ void setup() {
   
   // Configurar pines
   pinMode(ENCODER_CLK, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), handleEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoder, CHANGE);
   pinMode(ENCODER_DT, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), handleEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
   pinMode(ENCODER_SW, INPUT_PULLUP);
   pinMode(SQW_PIN, INPUT_PULLUP);
   pinMode(FLOW_SENSOR_PIN, INPUT);
@@ -889,54 +922,26 @@ void readSensors() {
 }
 
 void handleEncoder() {
-  int clkState = digitalRead(ENCODER_CLK);
-  
-  //if (clkState != lastClk && clkState == LOW) {
-  //  if (digitalRead(ENCODER_DT) != clkState) {
-  //    incrementCursor();
-  //  } else {
-  //    decrementCursor();
-  //  }
-  //  updateDisplay();
-  //}
-  
-  //lastClk = clkState;
-
-  if(digitalRead(ENCODER_CLK)==HIGH)
-    bitSet(current_state,1);
-  else
-    bitClear(current_state,1);
-  
-  if(digitalRead(ENCODER_DT)==HIGH)
-    bitSet(current_state,0);
-  else
-    bitClear(current_state,0);
-
-  if (clkState != lastClk && clkState == LOW) {
-    updateDisplay();
-  }
-
-  if(last_state==3 && current_state==1)
-    incrementCursor();
-  if(last_state==1 && current_state==0) 
-    incrementCursor();
-  if(last_state==0 && current_state==2)
-    incrementCursor();
-  if(last_state==2 && current_state==3)
-    incrementCursor();   
-      
-  if(last_state==3 && current_state==2)
-    decrementCursor();
-  if(last_state==2 && current_state==0)
-    decrementCursor();
-  if(last_state==0 && current_state==1)
-    decrementCursor();
-  if(last_state==1 && current_state==3)
-    decrementCursor();
+    static int lastEncoderPos = 0;
     
-  last_state = current_state;
-  lastClk = clkState; 
-
+    // Verificar si hubo cambio en el encoder
+    if (encoderChanged) {
+        noInterrupts();
+        int currentPos = encoderPos;
+        encoderChanged = false;
+        interrupts();
+        
+        // Detectar dirección del movimiento
+        if (currentPos > lastEncoderPos) {
+            incrementCursor();
+            updateDisplay();
+        } else if (currentPos < lastEncoderPos) {
+            decrementCursor();
+            updateDisplay();
+        }
+        
+        lastEncoderPos = currentPos;
+    }
 }
 
 void handleButtons() {
