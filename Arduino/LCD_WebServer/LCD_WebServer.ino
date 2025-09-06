@@ -465,7 +465,7 @@ void loop() {
     return;
   }  
 
-  //handleEncoder();
+  handleEncoder();
   handleButtons();
   
   
