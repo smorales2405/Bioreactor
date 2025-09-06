@@ -269,35 +269,21 @@ void IRAM_ATTR handleEmergency() {
   emergencyActive = true;
 }
 
-void IRAM_ATTR readEncoder() {
-    uint8_t currentState = 0;
+void IRAM_ATTR readEncoderSimple() {
+    static unsigned long lastInterruptTime = 0;
+    unsigned long interruptTime = millis();
     
-    // Leer estado actual de los pines
-    if(digitalRead(ENCODER_CLK) == HIGH)
-        bitSet(currentState, 1);
-    else
-        bitClear(currentState, 1);
-    
-    if(digitalRead(ENCODER_DT) == HIGH)
-        bitSet(currentState, 0);
-    else
-        bitClear(currentState, 0);
-    
-    // Detectar dirección basado en transición de estados
-    // Rotación horaria
-    if(encoderLastState == 3 && currentState == 1) encoderPos++;
-    if(encoderLastState == 1 && currentState == 0) encoderPos++;
-    if(encoderLastState == 0 && currentState == 2) encoderPos++;
-    if(encoderLastState == 2 && currentState == 3) encoderPos++;
-    
-    // Rotación antihoraria
-    if(encoderLastState == 3 && currentState == 2) encoderPos--;
-    if(encoderLastState == 2 && currentState == 0) encoderPos--;
-    if(encoderLastState == 0 && currentState == 1) encoderPos--;
-    if(encoderLastState == 1 && currentState == 3) encoderPos--;
-    
-    encoderLastState = currentState;
-    encoderChanged = true;
+    // Debounce de 5ms
+    if (interruptTime - lastInterruptTime > 5) {
+        // Leer el estado del DT para determinar dirección
+        if (digitalRead(ENCODER_DT) != digitalRead(ENCODER_CLK)) {
+            encoderPos++;
+        } else {
+            encoderPos--;
+        }
+        encoderChanged = true;
+        lastInterruptTime = interruptTime;
+    }
 }
 
 void setup() {
@@ -332,9 +318,9 @@ void setup() {
   
   // Configurar pines
   pinMode(ENCODER_CLK, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoder, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
   pinMode(ENCODER_DT, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
+  //attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
   pinMode(ENCODER_SW, INPUT_PULLUP);
   pinMode(SQW_PIN, INPUT_PULLUP);
   pinMode(FLOW_SENSOR_PIN, INPUT);
