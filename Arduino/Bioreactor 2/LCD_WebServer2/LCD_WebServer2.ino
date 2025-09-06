@@ -1,0 +1,4519 @@
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <RTClib.h>
+#include <SD.h>
+#include <SPI.h>
+#include <ArduinoJson.h>
+#include <Adafruit_MAX31865.h>
+#include <Adafruit_ADS1X15.h>
+#include <DFRobot_ESP_PH_WITH_ADC.h>
+#include <EEPROM.h>
+#include <PCF8574.h>
+
+// === Configuración WiFi ===
+const char* ap_ssid = "ESP32-Bioreactor";
+const char* ap_password = "bioreactor2025";
+
+// === LCD 20x4 ===
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// === RTC DS3231 ===
+RTC_DS3231 rtc;
+
+// === Sensores ===
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
+Adafruit_ADS1115 ads;
+DFRobot_ESP_PH_WITH_ADC phSensor;
+
+#define RREF      430.0
+#define RNOMINAL  100.0
+
+// === Pines del encoder ===
+#define ENCODER_CLK 34
+#define ENCODER_DT  35
+#define ENCODER_SW  32
+
+// === Pin del Boton Emergencia ===
+#define EMERGENCY_PIN 39
+
+// === Pin SQW del RTC ===
+#define SQW_PIN 17
+
+// Flujometro
+#define FLOW_SENSOR_PIN 36
+#define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
+#define K_FACTOR 7.5
+#define PULSOS_POR_LITRO (K_FACTOR * 60)
+
+// Variables de flujo
+volatile unsigned long pulseCount = 0;
+float volumeTotal = 0.0;
+float volumeLlenado = 0.0;
+float targetVolume = 0.0;
+bool fillingActive = false;
+unsigned long lastFlowCheck = 0;
+
+//Aireacion
+bool aireacionActive = false;
+bool co2Active = false;
+
+bool sequenceLoopMode = false;
+
+volatile bool emergencyActive = false;
+unsigned long lastEmergencyCheck = 0;
+
+// === Pines PWM LEDS ===
+const int ledPins[] = {4, 26, 16, 25};
+const char* ledNames[] = {"Blanco", "Rojo", "Verde", "Azul"};
+const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
+const int numLeds = 4;
+
+// === microSD SPI ===
+SPIClass sdSPI(VSPI);
+#define SD_CS   27
+#define SD_MOSI 13
+#define SD_MISO 12
+#define SD_SCK  14
+
+// === Variables de estado ===
+int selectedLed = 0;
+int selectedAction = 0;
+int pwmValues[4] = {0, 0, 0, 0};
+bool ledStates[4] = {false, false, false, false};
+
+// === Variables del encoder ===
+int lastClk = HIGH;
+unsigned long lastButtonPress = 0;
+unsigned long lastExtraButtonPress = 0;
+const unsigned long debounceDelay = 200;
+
+// Instancias PCF8574
+PCF8574 pcfInput(0x20);
+PCF8574 pcfOutput(0x21);
+
+// Direcciones EEPROM para turbidez
+#define EEPROM_TURB_MUESTRA1_V 100  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA1_C 104  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA2_V 108  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA2_C 112  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA3_V 116  // Float (4 bytes)
+#define EEPROM_TURB_MUESTRA3_C 120  // Float (4 bytes)
+#define EEPROM_TURB_COEF_A 124      // Float (4 bytes)
+#define EEPROM_TURB_COEF_B 128      // Float (4 bytes)
+#define EEPROM_TURB_COEF_C 132      // Float (4 bytes)
+
+// Direcciones EEPROM para pH
+#define EEPROM_PH_MUESTRA1_V 140  // Float (4 bytes)
+#define EEPROM_PH_MUESTRA1_PH 144 // Float (4 bytes)
+#define EEPROM_PH_MUESTRA2_V 148  // Float (4 bytes)
+#define EEPROM_PH_MUESTRA2_PH 152 // Float (4 bytes)
+#define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
+#define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
+
+// Variables para calibración de turbidez
+float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
+float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
+float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
+float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
+int turbCalibValue = 0;  // Valor temporal para calibración
+int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
+float tempVoltageReading = 0.0; // Voltaje temporal actual
+int tempConcentrationValue = 0; // Concentración temporal para editar
+
+// Variables para calibración de pH
+float phMuestra1V = 0.0, phMuestra1pH = 0.0;
+float phMuestra2V = 0.0, phMuestra2pH = 0.0;
+float phCoefM = 0.0, phCoefB = 0.0;
+int phCalibValue = 7;  // Valor temporal para calibración (iniciar en pH neutro)
+int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
+
+// Variables para almacenamiento de datos
+bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
+unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
+unsigned long logInterval = 300000; // 5 minutos en milisegundos (configurable)
+int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
+
+// Direcciones EEPROM para configuración de logging
+#define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
+
+// === Estados del menú ===
+enum MenuState {
+  MENU_MAIN,           
+  MENU_SENSORS,        
+  MENU_SENSOR_PH,      
+  MENU_PH_CALIBRATION_MENU,
+  MENU_PH_SET_MUESTRA,
+  MENU_PH_CONFIRM_MUESTRA,
+  MENU_PH_CALIBRATING,
+  MENU_PH_PANEL,              // Panel principal de pH
+  MENU_PH_SET_LIMIT,          // Configurar pH límite
+  MENU_SENSOR_TURBIDEZ,
+  MENU_TURB_CALIBRATION,
+  MENU_TURB_SET_MUESTRA,
+  MENU_TURB_CONFIRM_MUESTRA,
+  MENU_TURB_CALIBRATING,
+  MENU_TURB_MUESTRA_DETAIL,
+  MENU_TURB_SET_VOLTAGE,
+  MENU_TURB_CONFIRM_VOLTAGE,
+  MENU_TURB_SET_CONCENTRATION,
+  MENU_TURB_CONFIRM_CONCENTRATION,
+  MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
+  MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
+  MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
+  MENU_ACTION,         
+  MENU_LED_SELECT,
+  MENU_ONOFF,
+  MENU_INTENSITY,
+  MENU_SEQ_LIST,
+  MENU_SEQ_OPTIONS,
+  MENU_SEQ_CONFIG_CANTIDAD,
+  MENU_SEQ_CONFIG_COLOR,
+  MENU_SEQ_CONFIG_TIME,
+  MENU_SEQ_CONFIG_TIME_CONFIRM, 
+  MENU_SEQ_EXECUTION_MODE,       
+  MENU_SEQ_DELETE_ALL_CONFIRM,  
+  MENU_SEQ_CONFIRM_SAVE,
+  MENU_SEQ_RUNNING,
+  MENU_SEQ_STOP_CONFIRM,
+  MENU_SEQ_EXIT_CONFIG_CONFIRM,
+  MENU_LLENADO,
+  MENU_LLENADO_SET_VOLUME,
+  MENU_LLENADO_CONFIRM,
+  MENU_LLENADO_ACTIVE,
+  MENU_LLENADO_STOP_CONFIRM,
+  MENU_LLENADO_RESET_CONFIRM,
+  MENU_AIREACION,
+  MENU_CO2,
+  MENU_POTENCIA,
+  MENU_WEBSERVER,
+  MENU_ALMACENAR,
+  MENU_ALMACENAR_TYPE,
+  MENU_ALMACENAR_CONFIRM_START,
+  MENU_ALMACENAR_CONFIRM_STOP,
+  MENU_ALMACENAR_CONFIRM_DELETE,
+};
+
+MenuState currentMenu = MENU_MAIN;
+int menuCursor = 0;
+
+// === Variables de sensores ===
+float temperature = 0.0;
+float phValue = 0.0;
+float turbidityMCmL = 0.0;
+unsigned long lastSensorRead = 0;
+const unsigned long sensorReadInterval = 1000;
+
+// === Variables para calibración pH ===
+float calibrationValue = 0.0;
+int calibrationStep = 0;
+
+float phLimitSet = 7.0;      // pH límite establecido
+bool phControlActive = false; // Control automático activo
+bool co2InjectionActive = false; // Inyección manual activa
+int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
+int co2MinutesRemaining = 0; // Minutos restantes
+unsigned long co2StartTime = 0;
+
+// === Variables para las secuencias ===
+struct SequenceStep {
+  int colorIntensity[4];
+  int hours;    
+  int minutes;  
+  int seconds;  
+};
+
+struct Sequence {
+  bool configured;
+  int stepCount;
+  SequenceStep steps[10];
+};
+
+Sequence sequences[10];
+int selectedSequence = 0;
+int currentConfigStep = 0;
+int currentColorConfig = 0;
+bool sequenceRunning = false;
+int currentSequenceStep = 0;
+
+// === Variables de tiempo para la secuencia ===
+DateTime sequenceStartTime;
+DateTime stepStartTime;
+volatile bool rtcInterrupt = false;
+
+// Variables para encoder con interrupciones
+volatile int encoderPos = 0;
+volatile uint8_t encoderLastState = 0;
+volatile bool encoderChanged = false;
+
+// === Configuración PWM ===
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
+
+// === Servidor Web ===
+AsyncWebServer server(80);
+
+// === Función de interrupción del RTC ===
+void IRAM_ATTR onRTCInterrupt() {
+  rtcInterrupt = true;
+}
+
+// Función de interrupción para el sensor de flujo
+void IRAM_ATTR contarPulso() {
+  pulseCount++;
+}
+
+void IRAM_ATTR handleEmergency() {
+  emergencyActive = true;
+}
+
+void IRAM_ATTR readEncoderSimple() {
+    static unsigned long lastInterruptTime = 0;
+    unsigned long interruptTime = millis();
+    
+    // Debounce de 5ms
+    if (interruptTime - lastInterruptTime > 5) {
+        // Leer el estado del DT para determinar dirección
+        if (digitalRead(ENCODER_DT) != digitalRead(ENCODER_CLK)) {
+            encoderPos++;
+        } else {
+            encoderPos--;
+        }
+        encoderChanged = true;
+        lastInterruptTime = interruptTime;
+    }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Iniciando sistema integrado...");
+  
+  // Inicializar EEPROM
+  EEPROM.begin(512);
+  loadTurbidityCalibration();
+  loadPhCalibration(); 
+
+  EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
+  if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
+  volumeTotal = 0.0;
+  }
+  
+  EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
+  if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
+    logInterval = 300000; // 5 minutos por defecto
+  }
+
+  // Inicializar I2C y LCD
+  Wire.begin();
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  
+  lcd.setCursor(0, 0);
+  lcd.print("Sistema Integrado");
+  lcd.setCursor(0, 1);
+  lcd.print("Iniciando...");
+  
+  // Configurar pines
+  pinMode(ENCODER_CLK, INPUT);
+  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
+  pinMode(ENCODER_DT, INPUT);
+  //attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
+  pinMode(ENCODER_SW, INPUT_PULLUP);
+  pinMode(SQW_PIN, INPUT_PULLUP);
+  pinMode(FLOW_SENSOR_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), contarPulso, FALLING);
+  pinMode(EMERGENCY_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(EMERGENCY_PIN), handleEmergency, RISING);
+
+  // Configurar PCF8574
+  pcfInput.pinMode(P0, INPUT);
+  pcfInput.pinMode(P1, INPUT);
+  pcfInput.begin();
+
+  pcfOutput.pinMode(P1, OUTPUT);  // Aireación
+  pcfOutput.pinMode(P2, OUTPUT);  // Bomba de agua
+  pcfOutput.pinMode(P3, OUTPUT);  // Solenoide
+  pcfOutput.pinMode(P4, OUTPUT);  // LEd
+  pcfOutput.digitalWrite(P1, HIGH);
+  pcfOutput.digitalWrite(P2, HIGH);
+  pcfOutput.digitalWrite(P3, HIGH);
+  pcfOutput.digitalWrite(P4, HIGH);
+  pcfOutput.begin();
+
+  // Configurar PWM para cada LED
+  for (int i = 0; i < numLeds; i++) {
+    ledcAttach(ledPins[i], pwmFreq, pwmResolution);
+    ledcWrite(ledPins[i], 0);
+  }
+  
+  // Inicializar RTC
+  if (!rtc.begin()) {
+    Serial.println("RTC no detectado!");
+    lcd.setCursor(0, 2);
+    lcd.print("RTC Error!");
+  } else {
+    Serial.println("RTC OK");
+    lcd.setCursor(0, 2);
+    lcd.print("RTC OK");
+    
+    if (rtc.lostPower()) {
+      Serial.println("RTC sin energía, configurando hora...");
+      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+    
+    rtc.writeSqwPinMode(DS3231_SquareWave1Hz);
+    attachInterrupt(digitalPinToInterrupt(SQW_PIN), onRTCInterrupt, FALLING);
+  }
+  
+  // Inicializar sensores
+  //lcd.setCursor(10, 2);
+  //lcd.print("Sensores...");
+  
+  // MAX31865
+  thermo.begin(MAX31865_3WIRE);
+  
+  // pH Sensor
+  phSensor.begin();
+  
+  // ADS1115
+  ads.setGain(GAIN_TWOTHIRDS);
+  if (!ads.begin()) {
+    Serial.println("Error: No se detectó el ADS1115.");
+    //lcd.setCursor(10, 2);
+    //lcd.print("ADS Error!");
+  } //else {
+  //  lcd.setCursor(10, 2);
+  //  lcd.print("OK");
+  //}
+  
+  //delay(15000);
+
+  // Inicializar SD
+  lcd.setCursor(0, 3);
+  sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  if (!SD.begin(SD_CS, sdSPI)) {
+    Serial.println("Error al inicializar SD");
+    lcd.print("SD Card Error!");
+  } else {
+    Serial.println("SD inicializada correctamente");
+    lcd.print("SD Card OK");
+    
+    // Cargar secuencias desde SD
+    loadAllSequences();
+  }
+  
+  // Inicializar secuencias en memoria
+  for (int i = 0; i < 10; i++) {
+    if (!sequences[i].configured) {
+      sequences[i].configured = false;
+      sequences[i].stepCount = 0;
+      for (int j = 0; j < 10; j++) {
+        for (int k = 0; k < 4; k++) {
+          sequences[i].steps[j].colorIntensity[k] = 0;
+        }
+        sequences[i].steps[j].hours = 0;
+        sequences[i].steps[j].minutes = 0;  
+        sequences[i].steps[j].seconds = 0;  
+      }
+    }
+  }
+  
+  delay(1000);
+  
+  // Conectar WiFi
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Configurando WiFi");
+  setupWiFi();
+  
+  // Configurar servidor web
+  setupWebServer();
+  
+  // Iniciar servidor
+  server.begin();
+  
+  delay(1000);
+  
+  // Mostrar menú inicial
+  displayMainMenu();
+}
+
+void loop() {
+
+  handleEmergencyState();
+
+  // Si hay emergencia, no procesar nada más
+  if (emergencyActive) {
+    delay(100);  // Pequeña pausa para no saturar
+    return;
+  }  
+
+  handleEncoder();
+  handleButtons();
+  
+  // Leer sensores periódicamente
+  if (millis() - lastSensorRead > sensorReadInterval) {
+    lastSensorRead = millis();
+    readSensors();
+    
+    // Actualizar display si estamos en el menú de sensores
+    if (currentMenu == MENU_SENSORS) {
+      updateDisplay();
+    }
+  }
+  
+  // Actualizar medición de flujo continuamente
+  updateFlowMeasurement();
+  updateCO2Time();
+  checkPhControl();
+  checkDataLogging();
+  
+  // Si la secuencia está ejecutándose, verificar el tiempo
+  if (sequenceRunning && rtcInterrupt) {
+    rtcInterrupt = false;
+    checkSequenceProgress();
+    updateDisplay();
+  }
+
+  if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE && millis() - lastSensorRead > 1000) {
+  updateDisplay();
+  }
+
+}
+
+void setupWiFi() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Creando WiFi AP...");
+  
+  // Configurar ESP32 como Access Point
+  WiFi.mode(WIFI_AP);
+  
+  // Configurar canal y máximo de conexiones
+  const int channel = 1;          // Canal WiFi (1-13)
+  const int max_connection = 4;   // Máximo 4 dispositivos conectados
+  const bool hidden = false;      // false = red visible, true = red oculta
+
+  // Configurar IP estática para el AP (opcional)
+  IPAddress local_IP(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+
+  WiFi.softAPConfig(local_IP, gateway, subnet);
+
+  // Crear AP con configuración completa
+  bool result = WiFi.softAP(ap_ssid, ap_password, channel, hidden, max_connection);
+  
+  if (result) {
+    
+    lcd.setCursor(0, 1);
+    lcd.print("WiFi AP OK");
+    lcd.setCursor(0, 2);
+    lcd.print("Red: ");
+    lcd.print(ap_ssid);
+    lcd.setCursor(0, 3);
+    lcd.print("IP: ");
+    lcd.print(WiFi.softAPIP());
+    delay(3000);
+  } else {
+    Serial.println("\nError al crear AP");
+    lcd.setCursor(0, 1);
+    lcd.print("WiFi AP Error!");
+    delay(2000);
+  }
+}
+
+void setupWebServer() {
+  // Servir archivos estáticos desde la SD
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/index.html", "text/html");
+  });
+  
+  server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/styles.css", "text/css");
+  });
+  
+  // API para sensores
+  server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"temperature\":" + String(temperature, 1) + ",";
+    json += "\"ph\":" + String(phValue, 2) + ",";
+    json += "\"turbidity\":" + String(turbidityMCmL, 0);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+  
+// Control de LEDs individuales - ON/OFF
+server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(0, true, 100);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(0, false, 0);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(1, true, 100);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(1, false, 0);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(2, true, 100);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(2, false, 0);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(3, true, 100);
+  request->send(200, "text/plain", "OK");
+});
+
+server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
+  setLED(3, false, 0);
+  request->send(200, "text/plain", "OK");
+});
+
+  // Control PWM individual para cada color
+server.on("/led/blanco/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  String path = request->url();
+  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+  if (value >= 0 && value <= 100) {
+    setLED(0, value > 0, value);
+    request->send(200, "text/plain", "OK");
+  } else {
+    request->send(400, "text/plain", "Invalid value");
+  }
+});
+
+server.on("/led/rojo/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  String path = request->url();
+  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+  if (value >= 0 && value <= 100) {
+    setLED(1, value > 0, value);
+    request->send(200, "text/plain", "OK");
+  } else {
+    request->send(400, "text/plain", "Invalid value");
+  }
+});
+
+server.on("/led/verde/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  String path = request->url();
+  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+  if (value >= 0 && value <= 100) {
+    setLED(2, value > 0, value);
+    request->send(200, "text/plain", "OK");
+  } else {
+    request->send(400, "text/plain", "Invalid value");
+  }
+});
+
+server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  String path = request->url();
+  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+  if (value >= 0 && value <= 100) {
+    setLED(3, value > 0, value);
+    request->send(200, "text/plain", "OK");
+  } else {
+    request->send(400, "text/plain", "Invalid value");
+  }
+});
+  
+  // Estado de todos los LEDs
+  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    for (int i = 0; i < numLeds; i++) {
+      json += "\"" + String(ledNamesWeb[i]) + "\":{";
+      json += "\"state\":" + String(ledStates[i] ? "true" : "false") + ",";
+      json += "\"intensity\":" + String(pwmValues[i] * 5); // Convertir de 0-10 a 0-100
+      json += "}";
+      if (i < numLeds - 1) json += ",";
+    }
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+  
+  // API para secuencias
+  server.on("/api/sequences", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "[";
+    for (int i = 0; i < 10; i++) {
+      json += "{";
+      json += "\"id\":" + String(i) + ",";
+      json += "\"configured\":" + String(sequences[i].configured ? "true" : "false") + ",";
+      json += "\"steps\":" + String(sequences[i].stepCount);
+      json += "}";
+      if (i < 9) json += ",";
+    }
+    json += "]";
+    request->send(200, "application/json", json);
+  });
+  
+  // Detalles de una secuencia
+  server.on("/api/sequence/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
+    
+    if (seqId >= 0 && seqId < 10) {
+      String json = "{";
+      json += "\"id\":" + String(seqId) + ",";
+      json += "\"configured\":" + String(sequences[seqId].configured ? "true" : "false") + ",";
+      json += "\"steps\":[";
+      
+      for (int i = 0; i < sequences[seqId].stepCount; i++) {
+        json += "{";
+        json += "\"colors\":[";
+        for (int j = 0; j < 4; j++) {
+          json += String(sequences[seqId].steps[i].colorIntensity[j]);
+          if (j < 3) json += ",";
+        }
+        json += "],";
+        json += "\"hours\":" + String(sequences[seqId].steps[i].hours) + ",";
+        json += "\"minutes\":" + String(sequences[seqId].steps[i].minutes) + ","; 
+        json += "\"seconds\":" + String(sequences[seqId].steps[i].seconds);   
+        json += "}";
+        if (i < sequences[seqId].stepCount - 1) json += ",";
+      }
+      
+      json += "]}";
+      request->send(200, "application/json", json);
+    } else {
+      request->send(400, "text/plain", "Invalid sequence ID");
+    }
+  });
+  
+  // Iniciar secuencia
+  server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int startPos = path.indexOf("/sequence/") + 10;
+    int endPos = path.indexOf("/start");
+    int seqId = path.substring(startPos, endPos).toInt();
+    
+    if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
+      selectedSequence = seqId;
+      startSequence();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid sequence or not configured");
+    }
+  });
+  
+  // Detener secuencia
+  server.on("/api/sequence/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (sequenceRunning) {
+      stopSequence();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "No sequence running");
+    }
+  });
+  
+  // Estado de secuencia actual
+  server.on("/api/sequence/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"running\":" + String(sequenceRunning ? "true" : "false");
+    if (sequenceRunning) {
+      json += ",\"sequenceId\":" + String(selectedSequence);
+      json += ",\"currentStep\":" + String(currentSequenceStep);
+      json += ",\"totalSteps\":" + String(sequences[selectedSequence].stepCount);
+      
+      // Calcular tiempo transcurrido
+      DateTime now = rtc.now();
+      TimeSpan elapsed = now - stepStartTime;
+      int elapsedTotalSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
+                              elapsed.minutes() * 60 + elapsed.seconds();
+      int elapsedHours = elapsedTotalSeconds / 3600;
+      int elapsedMinutes = (elapsedTotalSeconds % 3600) / 60;
+      int elapsedSeconds = elapsedTotalSeconds % 60;
+
+      json += ",\"elapsedHours\":" + String(elapsedHours);
+      json += ",\"elapsedMinutes\":" + String(elapsedMinutes);
+      json += ",\"elapsedSeconds\":" + String(elapsedSeconds);
+      json += ",\"totalHours\":" + String(sequences[selectedSequence].steps[currentSequenceStep].hours);
+      json += ",\"totalMinutes\":" + String(sequences[selectedSequence].steps[currentSequenceStep].minutes);
+      json += ",\"totalSeconds\":" + String(sequences[selectedSequence].steps[currentSequenceStep].seconds);
+    }
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+  
+  // Guardar secuencia (recibe JSON)
+  server.on("/api/sequence/save", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      static String body = "";
+      
+      if (index == 0) {
+        body = "";
+      }
+      
+      for (size_t i = 0; i < len; i++) {
+        body += (char)data[i];
+      }
+      
+      if (index + len == total) {
+        DynamicJsonDocument doc(2048);
+        DeserializationError error = deserializeJson(doc, body);
+        
+        if (!error) {
+          int seqId = doc["id"];
+          if (seqId >= 0 && seqId < 10) {
+            sequences[seqId].configured = true;
+            sequences[seqId].stepCount = doc["steps"].size();
+            
+            JsonArray steps = doc["steps"];
+            for (int i = 0; i < sequences[seqId].stepCount && i < 10; i++) {
+              JsonObject step = steps[i];
+              JsonArray colors = step["colors"];
+              
+              for (int j = 0; j < 4; j++) {
+                sequences[seqId].steps[i].colorIntensity[j] = colors[j];
+              }
+              
+              sequences[seqId].steps[i].hours = step["hours"];
+              sequences[seqId].steps[i].minutes = step["minutes"];
+              sequences[seqId].steps[i].seconds = step["seconds"];
+            }
+            
+            saveSequence(seqId);
+            request->send(200, "text/plain", "OK");
+          } else {
+            request->send(400, "text/plain", "Invalid sequence ID");
+          }
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+        
+        body = "";
+      }
+    });
+
+    // Control de Aireación
+  server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    aireacionActive = true;
+    pcfOutput.digitalWrite(P2, LOW);
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    aireacionActive = false;
+    pcfOutput.digitalWrite(P2, HIGH);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Control de CO2
+  server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    co2Active = true;
+    pcfOutput.digitalWrite(P3, LOW);
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    co2Active = false;
+    pcfOutput.digitalWrite(P3, HIGH);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Estado de aireación y CO2
+  server.on("/api/aireacion/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"aireacion\":" + String(aireacionActive ? "true" : "false") + ",";
+    json += "\"co2\":" + String(co2Active ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+    
+    // Control de Llenado
+  server.on("/api/llenado/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"volumeTotal\":" + String(volumeTotal, 1) + ",";
+    json += "\"volumeLlenado\":" + String(volumeLlenado, 1) + ",";
+    json += "\"targetVolume\":" + String(targetVolume, 0) + ",";
+    json += "\"fillingActive\":" + String(fillingActive ? "true" : "false") + ",";
+    json += "\"isManualMode\":" + String(targetVolume >= 9999 ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Reiniciar volumen
+  server.on("/api/llenado/reset", HTTP_POST, [](AsyncWebServerRequest *request){
+    volumeTotal = 0.0;
+    pulseCount = 0;
+    saveVolumeToEEPROM();
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Iniciar llenado con volumen específico
+  server.on("/api/llenado/start", HTTP_POST, [](AsyncWebServerRequest* request) {
+    if (request->hasParam("volume", /*post=*/true)) {
+      const AsyncWebParameter* p = request->getParam("volume", /*post=*/true);
+      const String s = p->value();
+      const float vol = s.toFloat();
+
+      if (vol > 0 && vol <= 200) {
+        targetVolume = vol;
+        startFilling();
+        request->send(200, "text/plain", "OK");
+      } else {
+        request->send(400, "text/plain", "Invalid volume");
+      }
+    } else {
+      request->send(400, "text/plain", "Missing volume parameter");
+    }
+  });
+
+
+  // Iniciar bomba manual
+  server.on("/api/llenado/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){
+    fillingActive = true;
+    volumeLlenado = 0.0;
+    targetVolume = 9999;
+    pcfOutput.digitalWrite(P1, LOW);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Detener llenado/bomba
+  server.on("/api/llenado/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    stopFilling();
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Manejo de errores 404
+  server.onNotFound([](AsyncWebServerRequest *request){
+    request->send(404, "text/plain", "Not found");
+  });
+}
+
+void readSensors() {
+  // Leer temperatura
+  temperature = thermo.temperature(RNOMINAL, RREF);
+  
+  // Leer turbidez (AIN0)
+  turbidityMCmL = getTurbidityConcentration();
+  
+  // Leer pH
+  phValue = getPhValueCalibrated();
+}
+
+void handleEncoder() {
+    static int lastEncoderPos = 0;
+    
+    // Verificar si hubo cambio en el encoder
+    if (encoderChanged) {
+        noInterrupts();
+        int currentPos = encoderPos;
+        encoderChanged = false;
+        interrupts();
+        
+        // Detectar dirección del movimiento
+        if (currentPos > lastEncoderPos) {
+            incrementCursor();
+            updateDisplay();
+        } else if (currentPos < lastEncoderPos) {
+            decrementCursor();
+            updateDisplay();
+        }
+        
+        lastEncoderPos = currentPos;
+    }
+}
+
+void handleButtons() {
+
+  if (emergencyActive) return;
+
+  // Botón del encoder
+  if (digitalRead(ENCODER_SW) == LOW) {
+    if (millis() - lastButtonPress > debounceDelay) {
+      lastButtonPress = millis();
+      handleSelection();
+    }
+  }
+  
+  // Pulsador adicional
+  if (pcfInput.digitalRead(P1) == 0) {
+    if (millis() - lastExtraButtonPress > debounceDelay) {
+      lastExtraButtonPress = millis();
+      handleExtraButton();
+    }
+  }
+}
+
+void handleExtraButton() {
+  switch (currentMenu) {
+    case MENU_SEQ_CONFIG_CANTIDAD:
+    case MENU_SEQ_CONFIG_COLOR:
+    case MENU_SEQ_CONFIG_TIME:
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:  // Agregar este nuevo caso
+      currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_RUNNING:
+      currentMenu = MENU_SEQ_STOP_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_PANEL:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      phControlActive = false; // Desactivar control si se cancela
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+  }
+}
+
+void incrementCursor() {
+  switch (currentMenu) {
+    case MENU_MAIN:
+      menuCursor++;
+      if (menuCursor > 7) menuCursor = 0; // Ahora tenemos 3 opciones
+      break;
+      
+    case MENU_SENSORS:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0;
+      break;
+      
+    case MENU_SENSOR_PH:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // Fijar, Calibrar, Atrás
+      break;
+
+    case MENU_PH_CALIBRATION_MENU:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0; // 4 opciones
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      if (phCalibValue < 14) phCalibValue++;
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_PH_PANEL:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0;
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      if (menuCursor < 140) menuCursor++; // pH 0.0 a 14.0
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet < 60) co2MinutesSet++;
+      break;
+
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+      
+    case MENU_SENSOR_TURBIDEZ:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      menuCursor++;
+      if (menuCursor > 4) menuCursor = 0; // 5 opciones
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      if (turbCalibValue < 100) turbCalibValue++;
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_TURB_SET_VOLTAGE:
+      // No se puede navegar, solo visualizar
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      if (tempConcentrationValue < 100) tempConcentrationValue++;
+      break;
+
+    case MENU_TURB_CONFIRM_VOLTAGE:
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_TURB_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_ACTION:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0;
+      break;
+      
+    case MENU_LED_SELECT:
+      menuCursor++;
+      if (menuCursor > numLeds) menuCursor = 0;
+      break;
+      
+    case MENU_SEQ_LIST:
+      menuCursor++;
+      if (menuCursor > 11) menuCursor = 0;
+      break;
+      
+    case MENU_SEQ_OPTIONS:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0;
+      break;
+      
+    case MENU_SEQ_CONFIG_CANTIDAD:
+      if (menuCursor < 10) menuCursor++;
+      break;
+      
+    case MENU_SEQ_CONFIG_COLOR:
+      if (currentColorConfig < 4) {
+        if (menuCursor < 20) {
+          menuCursor++;
+          updateColorPreview();
+        }
+      } else {
+        menuCursor = (menuCursor == 0) ? 1 : 0;
+      }
+      break;
+      
+    case MENU_SEQ_CONFIG_TIME:
+      if (currentColorConfig == 0) {
+        if (menuCursor < 23) menuCursor++;
+      } else {
+        if (menuCursor < 59) menuCursor++;
+      }
+      break;
+      
+    case MENU_ONOFF:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0;
+      break;
+      
+    case MENU_INTENSITY:
+      if (menuCursor < 20) {  // Cambiar de 10 a 20 (0-100 en pasos de 5)
+        menuCursor++;
+        int intensity = menuCursor * 5;  // Cambiar de 10 a 5
+        int pwmValue = map(intensity, 0, 100, 0, 255);
+        ledcWrite(ledPins[selectedLed], pwmValue);
+      }
+      break;
+      
+    case MENU_SEQ_CONFIRM_SAVE:
+    case MENU_SEQ_STOP_CONFIRM:
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_LLENADO:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0; // Solo 3 opciones ahora
+      break;
+
+    case MENU_LLENADO_RESET_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_LLENADO_SET_VOLUME:
+      if (targetVolume < 200) targetVolume += 5;
+      break;
+
+    case MENU_LLENADO_CONFIRM:
+    case MENU_LLENADO_STOP_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_AIREACION:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_SEQ_EXECUTION_MODE:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0;
+      break;
+
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+    case MENU_SEQ_DELETE_ALL_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_CO2:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;  
+    
+    case MENU_ALMACENAR:
+      menuCursor++;
+      if (menuCursor > 4) menuCursor = 0; // 5 opciones (4 tipos + atrás)
+      break;
+
+    case MENU_ALMACENAR_TYPE:
+      menuCursor++;
+      if (menuCursor > 2) menuCursor = 0; // 3 opciones
+      break;
+
+    case MENU_ALMACENAR_CONFIRM_START:
+    case MENU_ALMACENAR_CONFIRM_STOP:
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+  }
+}
+
+void decrementCursor() {
+  switch (currentMenu) {
+    case MENU_MAIN:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 6;
+      break;
+      
+    case MENU_SENSORS:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 3;
+      break;
+      
+    case MENU_SENSOR_PH:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // Ahora son 3 opciones: Fijar, Calibrar, Atrás
+      break;
+      
+    case MENU_PH_CALIBRATION_MENU:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 3;
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      if (phCalibValue > 0) phCalibValue--;
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+      
+    case MENU_PH_PANEL:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones: Auto, Manual CO2, Atrás
+      break;
+      
+    case MENU_PH_SET_LIMIT:
+      if (menuCursor > 0) menuCursor--; // pH 0.0 a 14.0 (0-140)
+      break;
+      
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet > 0) co2MinutesSet--;
+      break;
+      
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_SENSOR_TURBIDEZ:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 4;
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      if (turbCalibValue > 0) turbCalibValue--;
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      if (tempConcentrationValue > 0) tempConcentrationValue--;
+      break;
+
+    case MENU_ACTION:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 3;
+      break;
+      
+    case MENU_LED_SELECT:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = numLeds;
+      break;
+      
+    case MENU_SEQ_LIST:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 11;
+      break;
+      
+    case MENU_SEQ_OPTIONS:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+      
+    case MENU_SEQ_CONFIG_CANTIDAD:
+      if (menuCursor > 1) menuCursor--;
+      break;
+      
+    case MENU_SEQ_CONFIG_COLOR:
+      if (currentColorConfig < 4) {
+        if (menuCursor > 0) {
+          menuCursor--;
+          updateColorPreview();
+        }
+      } else {
+        menuCursor = (menuCursor == 0) ? 1 : 0;
+      }
+      break;
+      
+    case MENU_SEQ_CONFIG_TIME:
+      if (currentColorConfig == 0) {
+        // Horas
+        if (menuCursor > 0) menuCursor--;
+      } else if (currentColorConfig == 1) {
+        // Minutos
+        if (menuCursor > 0) menuCursor--;
+      } else {
+        // Segundos
+        if (menuCursor > 0) menuCursor--;
+      }
+      break;
+      
+    case MENU_ONOFF:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2;
+      break;
+      
+    case MENU_INTENSITY:
+      if (menuCursor >= 0) {
+        menuCursor--;
+        int intensity = menuCursor * 5;  // Cambiar de 10 a 5
+        int pwmValue = map(intensity, 0, 100, 0, 255);
+        ledcWrite(ledPins[selectedLed], pwmValue);
+      }
+      break;
+      
+    case MENU_SEQ_CONFIRM_SAVE:
+    case MENU_SEQ_STOP_CONFIRM:
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+  case MENU_LLENADO:
+    menuCursor--;
+    if (menuCursor < 0) menuCursor = 3; // Solo 3 opciones ahora
+    break;
+
+  case MENU_LLENADO_RESET_CONFIRM:
+    menuCursor = (menuCursor == 0) ? 1 : 0;
+    break;
+
+    case MENU_LLENADO_SET_VOLUME:
+      if (targetVolume > 0) targetVolume -= 5;
+      break;
+
+    case MENU_LLENADO_CONFIRM:
+    case MENU_LLENADO_STOP_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_AIREACION:
+    menuCursor--;
+    if (menuCursor < 0) menuCursor = 2; // 3 opciones
+    break;
+
+    case MENU_SEQ_EXECUTION_MODE:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones (1 vez, bucle, atrás)
+      break;
+
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+    case MENU_SEQ_DELETE_ALL_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_CO2:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones
+      break;
+
+    case MENU_ALMACENAR:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 4; // 5 opciones (4 tipos + atrás)
+      break;
+
+    case MENU_ALMACENAR_TYPE:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 2; // 3 opciones (Almacenar, Detener, Borrar)
+      break;
+
+    case MENU_ALMACENAR_CONFIRM_START:
+    case MENU_ALMACENAR_CONFIRM_STOP:
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+  }
+}
+
+void handleSelection() {
+  switch (currentMenu) {
+    case MENU_MAIN:
+      if (menuCursor == 0) {
+        currentMenu = MENU_SENSORS;
+        menuCursor = 0;
+      } else if (menuCursor == 1) {
+        currentMenu = MENU_ACTION;
+        menuCursor = 0;
+      } else if (menuCursor == 2) {
+        currentMenu = MENU_LLENADO;
+        menuCursor = 0;
+      } else if (menuCursor == 3) {
+        currentMenu = MENU_AIREACION;
+        menuCursor = 0;
+      } else if (menuCursor == 4) {
+        currentMenu = MENU_CO2;
+        menuCursor = 0;
+      } else if (menuCursor == 5) {
+        currentMenu = MENU_POTENCIA;
+        menuCursor = 0;      
+      } else if (menuCursor == 6) {
+        currentMenu = MENU_ALMACENAR;
+        menuCursor = 0;
+      } else {
+        currentMenu = MENU_WEBSERVER;
+      }
+      break;
+      
+    case MENU_WEBSERVER:
+      // Volver al menú principal
+      currentMenu = MENU_MAIN;
+      menuCursor = 5;
+      break;
+      
+    case MENU_SENSORS:
+      if (menuCursor == 0) {
+        // Temperatura - no hace nada
+      } else if (menuCursor == 1) {
+        // pH - entrar a submenú
+        currentMenu = MENU_SENSOR_PH;
+        menuCursor = 0;
+      } else if (menuCursor == 2) {
+        // Turbidez - entrar a submenú
+        currentMenu = MENU_SENSOR_TURBIDEZ;
+        menuCursor = 0;
+      } else {
+        // Atrás
+        currentMenu = MENU_MAIN;
+        menuCursor = 0;
+      }
+      break;
+      
+    case MENU_SENSOR_PH:
+      if (menuCursor == 0) {
+        // Fijar - ir al panel de pH
+        currentMenu = MENU_PH_PANEL;
+        menuCursor = 0;
+      } else if (menuCursor == 1) {
+        // Calibración nueva
+        currentMenu = MENU_PH_CALIBRATION_MENU;
+        menuCursor = 0;
+        loadPhCalibration(); // Cargar datos de EEPROM
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSORS;
+        menuCursor = 1;
+      }
+      break;
+      
+    case MENU_PH_CALIBRATION_MENU:
+      if (menuCursor < 2) {
+        // Muestra 1 o 2
+        selectedPhMuestra = menuCursor;
+        currentMenu = MENU_PH_SET_MUESTRA;
+        phCalibValue = 7; // Valor inicial pH neutro
+      } else if (menuCursor == 2) {
+        // Calibrar
+        currentMenu = MENU_PH_CALIBRATING;
+        performPhCalibration();
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSOR_PH;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_PH_SET_MUESTRA:
+      currentMenu = MENU_PH_CONFIRM_MUESTRA;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_PH_CONFIRM_MUESTRA:
+      if (menuCursor == 0) {
+        // SI - Guardar
+        savePhMuestra(selectedPhMuestra);
+        currentMenu = MENU_PH_CALIBRATION_MENU;
+        menuCursor = selectedPhMuestra;
+      } else {
+        // NO - Volver a editar
+        currentMenu = MENU_PH_SET_MUESTRA;
+      }
+      break;
+
+    case MENU_PH_PANEL:
+      if (menuCursor == 0) {
+        // Control automático
+        currentMenu = MENU_PH_SET_LIMIT;
+        menuCursor = phLimitSet * 10; // Convertir a escala 0-140 (0.0 a 14.0)
+      } else if (menuCursor == 1) {
+        // Inyección manual
+        currentMenu = MENU_PH_MANUAL_CO2;
+        menuCursor = 0;
+        co2MinutesSet = 0;
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSOR_PH;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      // Guardar pH límite y activar control
+      phLimitSet = menuCursor / 10.0;
+      phControlActive = true;
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      if (co2MinutesSet > 0) {
+        currentMenu = MENU_PH_MANUAL_CO2_CONFIRM;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      if (menuCursor == 0) {
+        // SI - iniciar inyección
+        startCO2Injection();
+        currentMenu = MENU_PH_MANUAL_CO2_ACTIVE;
+      } else {
+        // NO - volver
+        currentMenu = MENU_PH_MANUAL_CO2;
+        menuCursor = co2MinutesSet;
+      }
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      // Detener inyección
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      break; 
+
+    case MENU_SENSOR_TURBIDEZ:
+      if (menuCursor == 0) {
+        // Ver valor actual
+        currentMenu = MENU_SENSORS;
+        menuCursor = 2;
+      } else if (menuCursor == 1) {
+        // Calibrar
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = 0;
+        loadTurbidityCalibration(); // Cargar datos de EEPROM
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSORS;
+        menuCursor = 2;
+      }
+      break;
+
+    case MENU_TURB_CALIBRATION:
+      if (menuCursor < 3) {
+        // Muestra 1, 2 o 3 - ahora va a detalle
+        selectedMuestra = menuCursor;
+        currentMenu = MENU_TURB_MUESTRA_DETAIL;
+        menuCursor = 0;
+      } else if (menuCursor == 3) {
+        // Calibrar
+        currentMenu = MENU_TURB_CALIBRATING;
+        performTurbidityCalibration();
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSOR_TURBIDEZ;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_TURB_SET_MUESTRA:
+      currentMenu = MENU_TURB_CONFIRM_MUESTRA;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_MUESTRA:
+      if (menuCursor == 0) {
+        // SI - Guardar
+        saveTurbidityMuestra(selectedMuestra);
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = selectedMuestra;
+      } else {
+        // NO - Volver a editar
+        currentMenu = MENU_TURB_SET_MUESTRA;
+      }
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      if (menuCursor == 0) {
+        // Editar Voltaje
+        currentMenu = MENU_TURB_SET_VOLTAGE;
+        tempVoltageReading = getTurbidityVoltage();
+      } else if (menuCursor == 1) {
+        // Editar Concentración
+        currentMenu = MENU_TURB_SET_CONCENTRATION;
+        // Cargar valor actual si existe
+        if (selectedMuestra == 0) tempConcentrationValue = (int)turbMuestra1C;
+        else if (selectedMuestra == 1) tempConcentrationValue = (int)turbMuestra2C;
+        else if (selectedMuestra == 2) tempConcentrationValue = (int)turbMuestra3C;
+      } else {
+        // Atrás
+        currentMenu = MENU_TURB_CALIBRATION;
+        menuCursor = selectedMuestra;
+      }
+      break;
+
+    case MENU_TURB_SET_VOLTAGE:
+      currentMenu = MENU_TURB_CONFIRM_VOLTAGE;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_VOLTAGE:
+      if (menuCursor == 0) {
+        // SI - Guardar voltaje actual
+        if (selectedMuestra == 0) {
+          turbMuestra1V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA1_V, turbMuestra1V);
+        } else if (selectedMuestra == 1) {
+          turbMuestra2V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA2_V, turbMuestra2V);
+        } else if (selectedMuestra == 2) {
+          turbMuestra3V = tempVoltageReading;
+          EEPROM.put(EEPROM_TURB_MUESTRA3_V, turbMuestra3V);
+        }
+        EEPROM.commit();
+      }
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 0;
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:
+      currentMenu = MENU_TURB_CONFIRM_CONCENTRATION;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      if (menuCursor == 0) {
+        // SI - Guardar concentración
+        if (selectedMuestra == 0) {
+          turbMuestra1C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA1_C, turbMuestra1C);
+        } else if (selectedMuestra == 1) {
+          turbMuestra2C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA2_C, turbMuestra2C);
+        } else if (selectedMuestra == 2) {
+          turbMuestra3C = (float)tempConcentrationValue;
+          EEPROM.put(EEPROM_TURB_MUESTRA3_C, turbMuestra3C);
+        }
+        EEPROM.commit();
+      }
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 1;
+      break;
+
+    case MENU_ACTION:
+      if (menuCursor == 0) {
+        // On/Off
+        selectedAction = 0;
+        currentMenu = MENU_LED_SELECT;
+        menuCursor = 0;
+      } else if (menuCursor == 1) {
+        // Intensidad
+        selectedAction = 1;
+        currentMenu = MENU_LED_SELECT;
+        menuCursor = 0;
+      } else if (menuCursor == 2) {
+        // Secuencias
+        currentMenu = MENU_SEQ_LIST;
+        menuCursor = 0;
+      } else {
+        // Atrás
+        currentMenu = MENU_MAIN;
+        menuCursor = 1;
+      }
+      break;
+      
+    case MENU_LED_SELECT:
+      if (menuCursor == numLeds) {
+        currentMenu = MENU_ACTION;
+        menuCursor = selectedAction;
+      } else {
+        selectedLed = menuCursor;
+        if (selectedAction == 0) {
+          currentMenu = MENU_ONOFF;
+          menuCursor = 0;
+        } else {
+          currentMenu = MENU_INTENSITY;
+          menuCursor = pwmValues[selectedLed];
+        }
+      }
+      break;
+      
+    case MENU_ONOFF:
+      if (menuCursor == 0) {
+        // ON - Cambiar estas líneas
+        //ledStates[selectedLed] = true;
+        //pwmValues[selectedLed] = 10;  // AGREGAR ESTA LÍNEA
+        ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
+      } else {
+        // OFF
+        //ledStates[selectedLed] = false;
+        //pwmValues[selectedLed] = 0;
+        ledcWrite(ledPins[selectedLed], 0);
+      }
+      currentMenu = MENU_ACTION;
+      menuCursor = 0;
+      break;
+      
+    case MENU_INTENSITY:
+      pwmValues[selectedLed] = menuCursor;
+      ledStates[selectedLed] = (menuCursor > 0);
+      //int pwmValue = map(intensity, 0, 100, 0, 255);
+      ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
+      currentMenu = MENU_LED_SELECT;
+      menuCursor = selectedLed;
+      break;
+      
+  case MENU_SEQ_LIST:
+    if (menuCursor == 10) {
+      // Borrar todas
+      currentMenu = MENU_SEQ_DELETE_ALL_CONFIRM;
+      menuCursor = 1; // Por defecto en NO
+    } else if (menuCursor == 11) {
+      // Atrás
+      currentMenu = MENU_ACTION;
+      menuCursor = 2;
+    } else {
+      selectedSequence = menuCursor;
+      currentMenu = MENU_SEQ_OPTIONS;
+      menuCursor = 0;
+    }
+    break;
+      
+  case MENU_SEQ_OPTIONS:
+    if (menuCursor == 0) {
+      // Realizar - ahora pide modo de ejecución
+      if (sequences[selectedSequence].configured) {
+        currentMenu = MENU_SEQ_EXECUTION_MODE;
+        menuCursor = 0;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Secuencia no");
+        lcd.setCursor(0, 2);
+        lcd.print("configurada!");
+        delay(2000);
+        currentMenu = MENU_SEQ_OPTIONS;
+        updateDisplay();
+      }
+    } else if (menuCursor == 1) {
+        // Configurar
+        currentConfigStep = 0;
+        currentColorConfig = 0;
+        currentMenu = MENU_SEQ_CONFIG_CANTIDAD;
+        menuCursor = 1;
+        sequences[selectedSequence].stepCount = 1;
+        for (int i = 0; i < 10; i++) {
+          for (int j = 0; j < 4; j++) {
+            sequences[selectedSequence].steps[i].colorIntensity[j] = 0;
+          }
+          sequences[selectedSequence].steps[i].hours = 0;
+          sequences[selectedSequence].steps[i].minutes = 0;  
+          sequences[selectedSequence].steps[i].seconds = 0; 
+        }
+      } else {
+        currentMenu = MENU_SEQ_LIST;
+        menuCursor = selectedSequence;
+      }
+      break;
+      
+    case MENU_SEQ_CONFIG_CANTIDAD:
+      sequences[selectedSequence].stepCount = menuCursor;
+      currentConfigStep = 0;
+      currentColorConfig = 0;
+      currentMenu = MENU_SEQ_CONFIG_COLOR;
+      menuCursor = 0;
+      for (int i = 0; i < 4; i++) {
+        sequences[selectedSequence].steps[0].colorIntensity[i] = 0;
+      }
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_CONFIG_COLOR:
+      if (currentColorConfig < 4) {
+        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = (menuCursor + 1) / 2;
+        
+        currentColorConfig++;
+        if (currentColorConfig < 4) {
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig];
+          updateColorPreview();
+        } else {
+          for (int i = 0; i < numLeds; i++) {
+            ledcWrite(ledPins[i], 0);
+          }
+          menuCursor = 0;
+        }
+      } else {
+        if (menuCursor == 0) {
+          currentColorConfig = 0;
+          currentMenu = MENU_SEQ_CONFIG_TIME;
+          menuCursor = 0;
+        } else {
+          currentColorConfig = 0;
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[0];
+          updateColorPreview();
+        }
+      }
+      break;
+      
+    case MENU_SEQ_CONFIG_TIME:
+      if (currentColorConfig == 0) {
+        sequences[selectedSequence].steps[currentConfigStep].hours = menuCursor;
+        currentColorConfig = 1;
+        menuCursor = 0;
+      } else if (currentColorConfig == 1) {
+        sequences[selectedSequence].steps[currentConfigStep].minutes = menuCursor;
+        currentColorConfig = 2;
+        menuCursor = 0;
+      } else {
+        sequences[selectedSequence].steps[currentConfigStep].seconds = menuCursor;
+        // Mostrar confirmación
+        currentMenu = MENU_SEQ_CONFIG_TIME_CONFIRM;
+        menuCursor = 0;
+      }
+      break;
+      
+    case MENU_SEQ_CONFIRM_SAVE:
+      if (menuCursor == 0) {
+        sequences[selectedSequence].configured = true;
+        saveSequence(selectedSequence);
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Secuencia guardada");
+        lcd.setCursor(0, 2);
+        lcd.print("en SD!");
+        delay(2000);
+        currentMenu = MENU_SEQ_LIST;
+        menuCursor = selectedSequence;
+      } else {
+        currentMenu = MENU_SEQ_LIST;
+        menuCursor = selectedSequence;
+      }
+      break;
+      
+    case MENU_SEQ_RUNNING:
+      currentMenu = MENU_SEQ_STOP_CONFIRM;
+      menuCursor = 1;
+      break;
+      
+    case MENU_SEQ_STOP_CONFIRM:
+      if (menuCursor == 0) {
+        stopSequence();
+        currentMenu = MENU_ACTION;
+        menuCursor = 2;
+      } else {
+        currentMenu = MENU_SEQ_RUNNING;
+      }
+      break;
+      
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      if (menuCursor == 0) {
+        for (int i = 0; i < numLeds; i++) {
+          ledcWrite(ledPins[i], 0);
+        }
+        currentMenu = MENU_SEQ_LIST;
+        menuCursor = selectedSequence;
+      } else {
+        if (currentConfigStep < sequences[selectedSequence].stepCount) {
+          if (currentColorConfig < 4) {
+            currentMenu = MENU_SEQ_CONFIG_COLOR;
+          } else {
+            currentMenu = MENU_SEQ_CONFIG_TIME;
+          }
+        } else {
+          currentMenu = MENU_SEQ_CONFIG_CANTIDAD;
+        }
+      }
+      break;
+
+  case MENU_LLENADO:
+    if (menuCursor == 0) {
+      // Pedir confirmación para reiniciar volumen
+      currentMenu = MENU_LLENADO_RESET_CONFIRM;
+      menuCursor = 1; // Por defecto en NO
+    } else if (menuCursor == 1) {
+      // Configurar llenado
+      currentMenu = MENU_LLENADO_SET_VOLUME;
+      menuCursor = 0;
+      targetVolume = 0;
+    } else if (menuCursor == 2) {
+      // Encender/Apagar bomba manual
+      if (!fillingActive) {
+        // Encender bomba sin límite
+        fillingActive = true;
+        volumeLlenado = 0.0;
+        targetVolume = 9999; // Valor alto para que no se detenga
+        pcfOutput.digitalWrite(P1, LOW);
+        currentMenu = MENU_LLENADO_ACTIVE;
+      } else {
+        // Si ya está activa, ir a pantalla de control
+        currentMenu = MENU_LLENADO_ACTIVE;
+      }
+    } else {
+      // Atrás
+      currentMenu = MENU_MAIN;
+      menuCursor = 2;
+    }
+    break;
+
+    case MENU_LLENADO_SET_VOLUME:
+      currentMenu = MENU_LLENADO_CONFIRM;
+      menuCursor = 1; // Por defecto en NO
+      break;
+
+    case MENU_LLENADO_CONFIRM:
+      if (menuCursor == 0) {
+        // SI - Iniciar llenado
+        startFilling();
+        currentMenu = MENU_LLENADO_ACTIVE;
+      } else {
+        // NO - Volver
+        currentMenu = MENU_LLENADO;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_LLENADO_ACTIVE:
+      currentMenu = MENU_LLENADO_STOP_CONFIRM;
+      menuCursor = 1;
+      break;
+
+    case MENU_LLENADO_STOP_CONFIRM:
+      if (menuCursor == 0) {
+        // SI - Detener
+        stopFilling();
+        currentMenu = MENU_LLENADO;
+        menuCursor = 0;
+      } else {
+        // NO - Continuar
+        currentMenu = MENU_LLENADO_ACTIVE;
+      }
+      break;
+    
+    case MENU_LLENADO_RESET_CONFIRM:
+      if (menuCursor == 0) {
+        // SI - Reiniciar volumen
+        volumeTotal = 0.0;
+        pulseCount = 0;
+        saveVolumeToEEPROM();
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Volumen reiniciado!");
+        delay(1500);
+      }
+      // En ambos casos volver al menú llenado
+      currentMenu = MENU_LLENADO;
+      menuCursor = 0;
+      break;
+
+    case MENU_AIREACION:
+      if (menuCursor == 0) {
+        if (emergencyActive) return;
+        // Encender
+        aireacionActive = true;
+        pcfOutput.digitalWrite(P2, LOW);
+      } else if (menuCursor == 1) {
+        // Apagar
+        aireacionActive = false;
+        pcfOutput.digitalWrite(P2, HIGH);
+      } else {
+        // Atrás
+        currentMenu = MENU_MAIN;
+        menuCursor = 3;
+      }
+      break;
+
+    case MENU_SEQ_EXECUTION_MODE:
+      if (menuCursor == 0) {
+        // Realizar 1 vez
+        sequenceLoopMode = false;
+        startSequence();
+      } else if (menuCursor == 1) {
+        // Realizar en bucle
+        sequenceLoopMode = true;
+        startSequence();
+      } else {
+        // Atrás
+        currentMenu = MENU_SEQ_OPTIONS;
+        menuCursor = 0;
+      }
+      break;
+
+case MENU_SEQ_CONFIG_TIME_CONFIRM:
+  if (menuCursor == 0) {
+    // SI - continuar
+    currentConfigStep++;
+    if (currentConfigStep < sequences[selectedSequence].stepCount) {
+      currentColorConfig = 0;
+      currentMenu = MENU_SEQ_CONFIG_COLOR;
+      menuCursor = 0;
+      for (int i = 0; i < 4; i++) {
+        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i] = 0;
+      }
+    } else {
+      currentMenu = MENU_SEQ_CONFIRM_SAVE;
+      menuCursor = 0;
+    }
+  } else {
+    // NO - reconfigurar tiempo
+    currentColorConfig = 0;
+    currentMenu = MENU_SEQ_CONFIG_TIME;
+    menuCursor = 0;
+  }
+  break;
+
+case MENU_SEQ_DELETE_ALL_CONFIRM:
+  if (menuCursor == 0) {
+    // SI - borrar todas
+    for (int i = 0; i < 10; i++) {
+      sequences[i].configured = false;
+      sequences[i].stepCount = 0;
+      String filename = "/seq_" + String(i + 1) + ".json";
+      SD.remove(filename);
+    }
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Todas las secuencias");
+    lcd.setCursor(0, 2);
+    lcd.print("han sido borradas");
+    delay(2000);
+  }
+  currentMenu = MENU_SEQ_LIST;
+  menuCursor = 0;
+  break;
+
+  case MENU_CO2:
+    if (menuCursor == 0) {
+      // Encender
+      co2Active = true;
+      pcfOutput.digitalWrite(P3, LOW);
+    } else if (menuCursor == 1) {
+      // Apagar
+      co2Active = false;
+      pcfOutput.digitalWrite(P3, HIGH);
+    } else {
+      // Atrás
+      currentMenu = MENU_MAIN;
+      menuCursor = 4;
+    }
+    break;
+
+  case MENU_POTENCIA:
+    // Volver al menú principal
+    currentMenu = MENU_MAIN;
+    menuCursor = 5;
+    break;
+
+  case MENU_ALMACENAR:
+  if (menuCursor < 4) {
+    // Tipo 1-4
+    selectedDataType = menuCursor;
+    currentMenu = MENU_ALMACENAR_TYPE;
+    menuCursor = 0;
+  } else {
+    // Atrás
+    currentMenu = MENU_MAIN;
+    menuCursor = 6;
+  }
+  break;
+
+  case MENU_ALMACENAR_TYPE:
+    if (menuCursor == 0) {
+      // Almacenar
+      if (!dataLogging[selectedDataType]) {
+        currentMenu = MENU_ALMACENAR_CONFIRM_START;
+        menuCursor = 1; // Por defecto en NO
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Ya esta");
+        lcd.setCursor(0, 2);
+        lcd.print("almacenando!");
+        delay(1500);
+      }
+    } else if (menuCursor == 1) {
+      // Detener
+      if (dataLogging[selectedDataType]) {
+        currentMenu = MENU_ALMACENAR_CONFIRM_STOP;
+        menuCursor = 1;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("No hay datos");
+        lcd.setCursor(0, 2);
+        lcd.print("almacenandose");
+        delay(1500);
+      }
+    } else {
+      // Borrar
+      currentMenu = MENU_ALMACENAR_CONFIRM_DELETE;
+      menuCursor = 1;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_START:
+    if (menuCursor == 0) {
+      // SI - Iniciar almacenamiento
+      startDataLogging(selectedDataType);
+      currentMenu = MENU_MAIN;
+      menuCursor = 0;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 0;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_STOP:
+    if (menuCursor == 0) {
+      // SI - Detener almacenamiento
+      stopDataLogging(selectedDataType);
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 1;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 1;
+    }
+    break;
+
+  case MENU_ALMACENAR_CONFIRM_DELETE:
+    if (menuCursor == 0) {
+      // SI - Borrar datos
+      deleteDataLog(selectedDataType);
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 2;
+    } else {
+      // NO
+      currentMenu = MENU_ALMACENAR_TYPE;
+      menuCursor = 2;
+    }
+    break;
+
+  }
+  
+  updateDisplay();
+}
+
+void updateDisplay() {
+  switch (currentMenu) {
+    case MENU_MAIN:
+      displayMainMenu();
+      break;
+    case MENU_SENSORS:
+      displaySensorsMenu();
+      break;
+    case MENU_SENSOR_PH:
+      displaySensorPhMenu();
+      break;
+    case MENU_PH_CALIBRATION_MENU:
+      displayPhCalibrationMenu();
+      break;
+    case MENU_PH_SET_MUESTRA:
+      displayPhSetMuestra();
+      break;
+    case MENU_PH_CONFIRM_MUESTRA:
+      displayPhConfirmMuestra();
+      break;
+    case MENU_PH_CALIBRATING:
+      displayPhCalibrating();
+      break;
+    case MENU_PH_PANEL:
+      displayPhPanel();
+      break;
+    case MENU_PH_SET_LIMIT:
+      displayPhSetLimit();
+      break;
+    case MENU_PH_MANUAL_CO2:
+      displayPhManualCO2();
+      break;
+    case MENU_PH_MANUAL_CO2_CONFIRM:
+      displayPhManualCO2Confirm();
+      break;
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      displayPhManualCO2Active();
+      break;
+    case MENU_SENSOR_TURBIDEZ:
+      displaySensorTurbidezMenu();
+      break;
+    case MENU_TURB_CALIBRATION:
+      displayTurbCalibrationMenu();
+      break;
+    case MENU_TURB_SET_MUESTRA:
+      displayTurbSetMuestra();
+      break;
+    case MENU_TURB_CONFIRM_MUESTRA:
+      displayTurbConfirmMuestra();
+      break;
+    case MENU_TURB_CALIBRATING:
+      displayTurbCalibrating();
+      break;
+    case MENU_TURB_MUESTRA_DETAIL:
+      displayTurbMuestraDetail();
+      break;
+    case MENU_TURB_SET_VOLTAGE:
+      displayTurbSetVoltage();
+      break;
+    case MENU_TURB_CONFIRM_VOLTAGE:
+      displayTurbConfirmVoltage();
+      break;
+    case MENU_TURB_SET_CONCENTRATION:
+      displayTurbSetConcentration();
+      break;
+    case MENU_TURB_CONFIRM_CONCENTRATION:
+      displayTurbConfirmConcentration();
+      break;
+    case MENU_WEBSERVER:
+      displayWebServerMenu();
+      break;
+    case MENU_ACTION:
+      displayActionMenu();
+      break;
+    case MENU_LED_SELECT:
+      displayLedSelectMenu();
+      break;
+    case MENU_ONOFF:
+      displayOnOffMenu();
+      break;
+    case MENU_INTENSITY:
+      displayIntensityMenu();
+      break;
+    case MENU_SEQ_LIST:
+      displaySeqList();
+      break;
+    case MENU_SEQ_OPTIONS:
+      displaySeqOptions();
+      break;
+    case MENU_SEQ_CONFIG_CANTIDAD:
+      displaySeqCantidad();
+      break;
+    case MENU_SEQ_CONFIG_COLOR:
+      displaySeqConfigColor();
+      break;
+    case MENU_SEQ_CONFIG_TIME:
+      displaySeqConfigTime();
+      break;
+    case MENU_SEQ_CONFIRM_SAVE:
+      displaySeqConfirmSave();
+      break;
+    case MENU_SEQ_RUNNING:
+      displaySeqRunning();
+      break;
+    case MENU_SEQ_STOP_CONFIRM:
+      displaySeqStopConfirm();
+      break;
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      displaySeqExitConfirm();
+      break;
+    case MENU_LLENADO:
+      displayLlenadoMenu();
+      break;
+    case MENU_LLENADO_SET_VOLUME:
+      displaySetVolume();
+      break;
+    case MENU_LLENADO_CONFIRM:
+      displayConfirmFilling();
+      break;
+    case MENU_LLENADO_ACTIVE:
+      displayFillingActive();
+      break;
+    case MENU_LLENADO_STOP_CONFIRM:
+      displayStopConfirm();
+      break;
+    case MENU_LLENADO_RESET_CONFIRM:
+      displayResetConfirm();
+      break;
+    case MENU_AIREACION:
+      displayAireacionMenu();
+      break;
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+      displayTimeConfirm();
+      break;
+    case MENU_SEQ_EXECUTION_MODE:
+      displayExecutionMode();
+      break;
+    case MENU_SEQ_DELETE_ALL_CONFIRM:
+      displayDeleteAllConfirm();
+      break;
+    case MENU_CO2:
+      displayCO2Menu();
+      break;
+    case MENU_POTENCIA:
+      displayPotenciaMenu();
+      break;
+    case MENU_ALMACENAR:
+      displayAlmacenarMenu();
+      break;
+    case MENU_ALMACENAR_TYPE:
+      displayAlmacenarTypeMenu();
+      break;
+    case MENU_ALMACENAR_CONFIRM_START:
+      displayAlmacenarConfirmStart();
+      break;
+    case MENU_ALMACENAR_CONFIRM_STOP:
+      displayAlmacenarConfirmStop();
+      break;
+    case MENU_ALMACENAR_CONFIRM_DELETE:
+      displayAlmacenarConfirmDelete();
+      break;
+  }
+}
+
+void displayMainMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SISTEMA PRINCIPAL:");
+  
+  // Con 6 opciones, necesitamos scroll
+  int startIndex = 0;
+  if (menuCursor > 2) {
+    startIndex = menuCursor - 2;
+    if (startIndex > 4) startIndex = 4; // Max 3 para mostrar las últimas 3
+  }
+  
+  const char* opciones[] = {"Sensores", "LEDs", "Llenado", "Aireacion", "CO2", "Potencia", "Almacenar","WebServer"};
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    if (optionIndex < 8) {
+      lcd.setCursor(0, i + 1);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print(opciones[optionIndex]);
+    }
+  }
+  
+  // Indicadores de scroll
+  if (startIndex > 0) {
+    lcd.setCursor(19, 1);
+    lcd.print("^");
+  }
+  if (startIndex < 3) {
+    lcd.setCursor(19, 3);
+    lcd.print("v");
+  }
+  
+  // Hora
+  //DateTime now = rtc.now();
+  //cd.setCursor(14, 0);
+  //if (now.hour() < 10) lcd.print("0");
+  //lcd.print(now.hour());
+  //lcd.print(":");
+  //if (now.minute() < 10) lcd.print("0");
+  //lcd.print(now.minute());
+}
+
+void displayActionMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONTROL LEDs:");
+  
+  int startIndex = 0;
+  if (menuCursor > 2) startIndex = 1;
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    lcd.setCursor(0, i + 1);
+    
+    if (optionIndex == 0) {
+      lcd.print(menuCursor == 0 ? "> " : "  ");
+      lcd.print("On/Off");
+    } else if (optionIndex == 1) {
+      lcd.print(menuCursor == 1 ? "> " : "  ");
+      lcd.print("Intensidad");
+    } else if (optionIndex == 2) {
+      lcd.print(menuCursor == 2 ? "> " : "  ");
+      lcd.print("Secuencias");
+    } else if (optionIndex == 3) {
+      lcd.print(menuCursor == 3 ? "> " : "  ");
+      lcd.print("Atras");
+    }
+  }
+}
+
+void displaySensorsMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SENSORES:");
+  
+  // Temperatura
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Temp: ");
+  lcd.print(temperature, 1);
+  lcd.print(" C");
+  
+  // pH
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("pH: ");
+  lcd.print(phValue, 2);
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor < 3) {
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Turb: ");
+    if (turbidityMCmL >= 0) {
+      lcd.print(turbidityMCmL, 1);
+      lcd.print(" MC/mL");
+    } else {
+      lcd.print("Sin Cal");
+    }
+  } else {
+    lcd.print("> Atras");
+  }
+}
+
+void displayWebServerMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SERVIDOR WEB:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Red: ");
+  lcd.print(ap_ssid);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Pass: ");
+  lcd.print(ap_password);
+
+  lcd.setCursor(0, 3);
+  lcd.print("IP: ");
+  lcd.print(WiFi.softAPIP());
+}
+
+void displaySensorPhMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SENSOR pH:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Fijar");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Calibracion");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayPhCalibrationSelect() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRAR pH:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Buffer pH 4.0");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Buffer pH 7.0");
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor < 3) {
+    lcd.print(menuCursor == 2 ? "> " : "  ");
+    lcd.print("Buffer pH 10.0");
+  } else {
+    lcd.print("> Atras");
+  }
+}
+
+void displayLedSelectMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SELECCIONAR TIRA:");
+  
+  int startIndex = 0;
+  int displayLines = 3;
+  
+  if (menuCursor >= 3) {
+    startIndex = menuCursor - 2;
+  }
+  
+  for (int i = 0; i < displayLines; i++) {
+    int optionIndex = startIndex + i;
+    lcd.setCursor(0, i + 1);
+    
+    if (optionIndex < numLeds) {
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print(ledNames[optionIndex]);
+      
+      if (ledStates[optionIndex]) {
+        lcd.setCursor(10, i + 1);
+        if (pwmValues[optionIndex] == 20) {
+          lcd.print("[ON]");
+        } else {
+          lcd.print("[");
+          lcd.print(pwmValues[optionIndex]*5);
+          lcd.print("%]");
+        }
+      } else {
+        lcd.setCursor(10, i + 1);
+        lcd.print("[OFF]");
+      }
+    } else if (optionIndex == numLeds) {
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print("Atras");
+    }
+  }
+}
+
+void displayOnOffMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("TIRA: ");
+  lcd.print(ledNames[selectedLed]);
+  
+  lcd.setCursor(14, 0);
+  if (ledStates[selectedLed]) {
+    if (pwmValues[selectedLed] == 20) {
+      lcd.print("[ON]");
+    } else {
+      lcd.print("[");
+      lcd.print(pwmValues[selectedLed]*5);
+      lcd.print("%]");
+    }
+  } else {
+    lcd.print("[OFF]");
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("ON  (Max)");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("OFF");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayIntensityMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INTENSIDAD ");
+  lcd.print(ledNames[selectedLed]);
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Nivel: ");
+  int percentage = menuCursor * 5;  // Pasos de 5%
+  lcd.print(percentage);
+  lcd.print("%");
+  if (percentage == 100) {
+    lcd.print(" (MAX)");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print("[");
+  int barLength = map(menuCursor, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
+  for (int i = 0; i < 18; i++) {
+    if (i < barLength) {
+      lcd.print("=");
+    } else {
+      lcd.print(" ");
+    }
+  }
+  lcd.print("]");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para guardar");
+}
+
+void displaySeqList() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SECUENCIAS [");
+  int configuredCount = 0;
+  for (int i = 0; i < 10; i++) {
+    if (sequences[i].configured) configuredCount++;
+  }
+  lcd.print(configuredCount);
+  lcd.print("/10]:");
+  
+  int startIndex = 0;
+  int displayLines = 3;
+  int totalOptions = 12; // Ahora incluye "Borrar todas" y "Atrás"
+  
+  if (menuCursor <= 1) {
+    startIndex = 0;
+  } else if (menuCursor >= totalOptions - 2) {
+    startIndex = totalOptions - displayLines;
+  } else {
+    startIndex = menuCursor - 1;
+  }
+  
+  for (int i = 0; i < displayLines; i++) {
+    int optionIndex = startIndex + i;
+    
+    if (optionIndex >= totalOptions) break;
+    
+    lcd.setCursor(0, i + 1);
+    
+    if (optionIndex < 10) {
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print("Seq ");
+      if (optionIndex < 9) {
+        lcd.print(optionIndex + 1);
+        lcd.print(" ");
+      } else {
+        lcd.print(optionIndex + 1);
+      }
+      
+      if (sequences[optionIndex].configured) {
+        lcd.print(" [");
+        lcd.print(sequences[optionIndex].stepCount);
+        lcd.print("p]");
+      } else {
+        lcd.print(" [--]");
+      }
+    } else if (optionIndex == 10) {
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print("Borrar todas");
+    } else if (optionIndex == 11) {
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print("Atras");
+    }
+  }
+  
+  if (totalOptions > displayLines) {
+    lcd.setCursor(19, 1);
+    if (startIndex > 0) lcd.print("^");
+    lcd.setCursor(19, 3);
+    if (startIndex + displayLines < totalOptions) lcd.print("v");
+  }
+}
+
+void displaySeqOptions() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SECUENCIA ");
+  lcd.print(selectedSequence + 1);
+  if (sequences[selectedSequence].configured) {
+    lcd.print(" [");
+    lcd.print(sequences[selectedSequence].stepCount);
+    lcd.print("p]");
+  } else {
+    lcd.print(" [--]");
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Realizar");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Configurar");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displaySeqCantidad() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SECUENCIA ");
+  lcd.print(selectedSequence + 1);
+  lcd.print(":");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Cantidad de pasos:");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("> ");
+  lcd.print(menuCursor);
+  lcd.print(" paso");
+  if (menuCursor > 1) lcd.print("s");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para continuar");
+}
+
+void displaySeqConfigColor() {
+  lcd.clear();
+  
+  if (currentColorConfig < 4) {
+    lcd.setCursor(0, 0);
+    lcd.print("Paso ");
+    lcd.print(currentConfigStep + 1);
+    lcd.print(" [");
+    lcd.print(currentColorConfig + 1);
+    lcd.print("/4]");
+    
+    lcd.setCursor(0, 1);
+    lcd.print(ledNames[currentColorConfig]);
+    lcd.print(": ");
+    lcd.print(menuCursor * 5);  // Mostrar directamente el porcentaje
+    lcd.print("%");
+    
+    lcd.print("[");
+    int barLength = map(menuCursor, 0, 20, 0, 18);
+    for (int i = 0; i < 18; i++) {
+      if (i < barLength) {
+        lcd.print("=");
+      } else {
+        lcd.print(" ");
+      }
+    }
+    lcd.print("]");
+    
+    lcd.setCursor(0, 3);
+    if (currentColorConfig > 0) {
+      for (int i = 0; i < currentColorConfig; i++) {
+        if (sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i] > 0) {
+          lcd.print(ledNames[i][0]);
+          lcd.print(sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]);
+          lcd.print(" ");
+        }
+      }
+    } else {
+      lcd.print("Click siguiente");
+    }
+  } else {
+    lcd.setCursor(0, 0);
+    lcd.print("Paso ");
+    lcd.print(currentConfigStep + 1);
+    lcd.print(" configurado:");
+    
+    for (int i = 0; i < 4; i++) {
+      if (sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i] > 0) {
+        lcd.setCursor(0, i < 2 ? 1 : 2);
+        if (i == 2) lcd.setCursor(10, 1);
+        if (i == 3) lcd.setCursor(10, 2);
+        lcd.print(ledNames[i][0]);
+        lcd.print(":");
+        lcd.print(sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]);
+      }
+    }
+    
+    lcd.setCursor(0, 3);
+    lcd.print(menuCursor == 0 ? "> Continuar" : "> Reconfigurar");
+  }
+}
+
+void displaySeqConfigTime() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Paso ");
+  lcd.print(currentConfigStep + 1);
+  lcd.print(" - Tiempo:");
+  
+  String colors = "";
+  for (int i = 0; i < 4; i++) {
+    if (sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i] > 0) {
+      if (colors.length() > 0) colors += "+";
+      colors += ledNames[i][0];
+    }
+  }
+  lcd.setCursor(0, 1);
+  lcd.print(colors);
+  
+  if (currentColorConfig == 0) {
+    // Horas
+    lcd.setCursor(0, 2);
+    lcd.print("> ");
+    if (menuCursor < 10) lcd.print("0");
+    lcd.print(menuCursor);
+    lcd.print(" Horas");
+  } else if (currentColorConfig == 1) {
+    // Minutos
+    lcd.setCursor(0, 2);
+    lcd.print("  ");
+    if (sequences[selectedSequence].steps[currentConfigStep].hours < 10) lcd.print("0");
+    lcd.print(sequences[selectedSequence].steps[currentConfigStep].hours);
+    lcd.print(" Horas");
+    
+    lcd.setCursor(0, 3);
+    lcd.print("> ");
+    if (menuCursor < 10) lcd.print("0");
+    lcd.print(menuCursor);
+    lcd.print(" Minutos");
+  } else {
+    // Segundos
+    lcd.setCursor(0, 2);
+    lcd.print("  ");
+    lcd.print(sequences[selectedSequence].steps[currentConfigStep].hours);
+    lcd.print("h ");
+    lcd.print(sequences[selectedSequence].steps[currentConfigStep].minutes);
+    lcd.print("m");
+    
+    lcd.setCursor(0, 3);
+    lcd.print("> ");
+    if (menuCursor < 10) lcd.print("0");
+    lcd.print(menuCursor);
+    lcd.print(" Segundos");
+  }
+}
+
+void displaySeqConfirmSave() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR CAMBIOS?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Secuencia ");
+  lcd.print(selectedSequence + 1);
+  lcd.print(" (");
+  lcd.print(sequences[selectedSequence].stepCount);
+  lcd.print(" pasos)");
+  
+  // Mostrar tiempo total de la secuencia
+  int totalSeconds = 0;
+  for (int i = 0; i < sequences[selectedSequence].stepCount; i++) {
+    totalSeconds += sequences[selectedSequence].steps[i].hours * 3600 +
+                   sequences[selectedSequence].steps[i].minutes * 60 +
+                   sequences[selectedSequence].steps[i].seconds;
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displaySeqRunning() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Seq ");
+  lcd.print(selectedSequence + 1);
+  lcd.print(" [");
+  lcd.print(currentSequenceStep + 1);
+  lcd.print("/");
+  lcd.print(sequences[selectedSequence].stepCount);
+  lcd.print("]");
+  if (sequenceLoopMode) {
+    lcd.print(" BUCLE");
+  }
+  
+  lcd.setCursor(0, 1);
+  String activeColors = "";
+  for (int i = 0; i < 4; i++) {
+    if (sequences[selectedSequence].steps[currentSequenceStep].colorIntensity[i] > 0) {
+      if (activeColors.length() > 0) activeColors += "+";
+      activeColors += ledNames[i][0];
+      activeColors += String(sequences[selectedSequence].steps[currentSequenceStep].colorIntensity[i]);
+    }
+  }
+  lcd.print(activeColors);
+  
+  // Calcular tiempo transcurrido
+  DateTime now = rtc.now();
+  TimeSpan elapsed = now - stepStartTime;
+  
+  int totalHours = sequences[selectedSequence].steps[currentSequenceStep].hours;
+  int totalMinutes = sequences[selectedSequence].steps[currentSequenceStep].minutes;
+  int totalSeconds = sequences[selectedSequence].steps[currentSequenceStep].seconds;
+  
+  // Convertir tiempo transcurrido a segundos totales
+  int elapsedTotalSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
+                            elapsed.minutes() * 60 + elapsed.seconds();
+  
+  // Descomponer en horas, minutos, segundos
+  int elapsedHours = elapsedTotalSeconds / 3600;
+  int elapsedMinutes = (elapsedTotalSeconds % 3600) / 60;
+  int elapsedSeconds = elapsedTotalSeconds % 60;
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Tiempo: ");
+  if (elapsedHours < 10) lcd.print("0");
+  lcd.print(elapsedHours);
+  lcd.print(":");
+  if (elapsedMinutes < 10) lcd.print("0");
+  lcd.print(elapsedMinutes);
+  lcd.print(":");
+  if (elapsedSeconds < 10) lcd.print("0");
+  lcd.print(elapsedSeconds);
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Total: ");
+  if (totalHours < 10) lcd.print("0");
+  lcd.print(totalHours);
+  lcd.print(":");
+  if (totalMinutes < 10) lcd.print("0");
+  lcd.print(totalMinutes);
+  lcd.print(":");
+  if (totalSeconds < 10) lcd.print("0");
+  lcd.print(totalSeconds);
+  
+  // Indicador de progreso en la esquina
+  int totalStepSeconds = totalHours * 3600 + totalMinutes * 60 + totalSeconds;
+  if (totalStepSeconds > 0) {
+    int progress = (elapsedTotalSeconds * 100) / totalStepSeconds;
+    if (progress > 100) progress = 100;
+    lcd.setCursor(17, 3);
+    lcd.print(progress);
+    lcd.print("%");
+  }
+}
+
+void displaySeqStopConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("DETENER SECUENCIA?");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displaySeqExitConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SALIR DE CONFIG?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Se perderan cambios");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void updateColorPreview() {
+  for (int i = 0; i <= currentColorConfig; i++) {
+    int intensity;
+    if (i == currentColorConfig) {
+      intensity = menuCursor*5;
+    } else {
+      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]*10;
+    }
+    
+    int pwmValue = map(intensity, 0, 100, 0, 255);
+    ledcWrite(ledPins[i], pwmValue);
+  }
+  
+  for (int i = currentColorConfig + 1; i < numLeds; i++) {
+    ledcWrite(ledPins[i], 0);
+  }
+}
+
+void setLED(int index, bool state, int intensity) {
+  if (index < 0 || index >= numLeds) return;
+  
+  ledStates[index] = state;
+  pwmValues[index] = intensity / 5; // Convertir de 0-100 a 0-10 para consistencia con LCD
+  
+  int pwmValue = map(intensity, 0, 100, 0, 255);
+  ledcWrite(ledPins[index], state ? pwmValue : 0);
+  
+  // Actualizar LCD si estamos en el menú correspondiente
+  if (currentMenu == MENU_LED_SELECT || currentMenu == MENU_ONOFF || currentMenu == MENU_INTENSITY) {
+    updateDisplay();
+  }
+  
+  Serial.print("LED ");
+  Serial.print(ledNames[index]);
+  Serial.print(": ");
+  Serial.print(state ? "ON" : "OFF");
+  Serial.print(" - Intensidad: ");
+  Serial.println(intensity);
+}
+
+void startSequence() {
+  sequenceRunning = true;
+  currentSequenceStep = 0;
+  sequenceStartTime = rtc.now();
+  stepStartTime = rtc.now();
+  
+  for (int i = 0; i < numLeds; i++) {
+    ledcWrite(ledPins[i], 0);
+  }
+  
+  applySequenceStep(0);
+  currentMenu = MENU_SEQ_RUNNING;
+  
+  Serial.print("Secuencia ");
+  Serial.print(selectedSequence + 1);
+  Serial.println(" iniciada");
+}
+
+void stopSequence() {
+  sequenceRunning = false;
+  
+  for (int i = 0; i < numLeds; i++) {
+    ledcWrite(ledPins[i], 0);
+    ledStates[i] = false;
+    pwmValues[i] = 0;
+  }
+  
+  Serial.println("Secuencia detenida");
+}
+
+void applySequenceStep(int step) {
+  for (int i = 0; i < 4; i++) {
+    int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
+    int pwmValue = map(intensity, 0, 10, 0, 255);
+    ledcWrite(ledPins[i], pwmValue);
+    ledStates[i] = intensity > 0;
+    pwmValues[i] = intensity;
+    
+    if (intensity > 0) {
+      Serial.print(ledNames[i]);
+      Serial.print(":");
+      Serial.print(intensity * 10);
+      Serial.print("% ");
+    }
+  }
+  Serial.println();
+}
+
+void checkSequenceProgress() {
+  if (!sequenceRunning) return;
+  
+  DateTime now = rtc.now();
+  TimeSpan elapsed = now - stepStartTime;
+  
+  int totalSeconds = sequences[selectedSequence].steps[currentSequenceStep].hours * 3600 + 
+                     sequences[selectedSequence].steps[currentSequenceStep].minutes * 60 +
+                     sequences[selectedSequence].steps[currentSequenceStep].seconds;
+  int elapsedSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
+                       elapsed.minutes() * 60 + elapsed.seconds();
+  
+  if (elapsedSeconds >= totalSeconds) {
+    for (int i = 0; i < numLeds; i++) {
+      ledcWrite(ledPins[i], 0);
+    }
+    
+    currentSequenceStep++;
+    
+    if (currentSequenceStep >= sequences[selectedSequence].stepCount) {
+      if (sequenceLoopMode) {
+        // Reiniciar secuencia
+        currentSequenceStep = 0;
+        stepStartTime = now;
+        applySequenceStep(0);
+      } else {
+        stopSequence();
+        currentMenu = MENU_ACTION;
+        menuCursor = 0;
+        Serial.println("Secuencia completada");
+      }
+    } else {
+      stepStartTime = now;
+      applySequenceStep(currentSequenceStep);
+    }
+    
+    updateDisplay();
+  }
+}
+
+void saveSequence(int seqIndex) {
+  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  
+  SD.remove(filename);
+  
+  File file = SD.open(filename, FILE_WRITE);
+  if (!file) {
+    Serial.println("Error al crear archivo de secuencia");
+    return;
+  }
+  
+  DynamicJsonDocument doc(2048);
+  doc["configured"] = true;
+  doc["stepCount"] = sequences[seqIndex].stepCount;
+  
+  JsonArray steps = doc.createNestedArray("steps");
+  
+  for (int i = 0; i < sequences[seqIndex].stepCount; i++) {
+    JsonObject step = steps.createNestedObject();
+    JsonArray colors = step.createNestedArray("colors");
+    
+    for (int j = 0; j < 4; j++) {
+      colors.add(sequences[seqIndex].steps[i].colorIntensity[j]);
+    }
+    
+  step["hours"] = sequences[seqIndex].steps[i].hours;
+  step["minutes"] = sequences[seqIndex].steps[i].minutes;
+  step["seconds"] = sequences[seqIndex].steps[i].seconds;
+  }
+  
+  serializeJson(doc, file);
+  file.close();
+  
+  Serial.print("Secuencia ");
+  Serial.print(seqIndex + 1);
+  Serial.println(" guardada en SD");
+}
+
+void loadSequence(int seqIndex) {
+  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  
+  File file = SD.open(filename, FILE_READ);
+  if (!file) {
+    sequences[seqIndex].configured = false;
+    return;
+  }
+  
+  DynamicJsonDocument doc(2048);
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+  
+  if (error) {
+    Serial.print("Error al leer secuencia ");
+    Serial.println(seqIndex + 1);
+    sequences[seqIndex].configured = false;
+    return;
+  }
+  
+  sequences[seqIndex].configured = doc["configured"];
+  sequences[seqIndex].stepCount = doc["stepCount"];
+  
+  JsonArray steps = doc["steps"];
+  for (int i = 0; i < sequences[seqIndex].stepCount; i++) {
+    JsonObject step = steps[i];
+    JsonArray colors = step["colors"];
+    
+    for (int j = 0; j < 4; j++) {
+      sequences[seqIndex].steps[i].colorIntensity[j] = colors[j];
+    }
+    
+  sequences[seqIndex].steps[i].hours = step["hours"];
+  sequences[seqIndex].steps[i].minutes = step["minutes"];
+  sequences[seqIndex].steps[i].seconds = step["seconds"];
+  }
+  
+  Serial.print("Secuencia ");
+  Serial.print(seqIndex + 1);
+  Serial.println(" cargada desde SD");
+}
+
+void loadAllSequences() {
+  Serial.println("Cargando secuencias desde SD...");
+  for (int i = 0; i < 10; i++) {
+    loadSequence(i);
+  }
+}
+
+void startFilling() {
+
+  if (emergencyActive) return;
+
+  fillingActive = true;
+  volumeLlenado = 0.0;
+  // Guardar el volumen actual como referencia
+  noInterrupts();
+  unsigned long pulsos = pulseCount;
+  interrupts();
+  volumeTotal = pulsos / PULSOS_POR_LITRO;
+  
+  pcfOutput.digitalWrite(P1, LOW); // Activar bomba
+}
+
+void stopFilling() {
+  fillingActive = false;
+  pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
+}
+
+void saveVolumeToEEPROM() {
+  EEPROM.put(EEPROM_VOLUME_ADDR, volumeTotal);
+  EEPROM.commit();
+}
+
+void updateFlowMeasurement() {
+  if (millis() - lastFlowCheck >= 500) {
+    lastFlowCheck = millis();
+    
+    noInterrupts();
+    unsigned long pulsos = pulseCount;
+    interrupts();
+    
+    float litrosActuales = pulsos / PULSOS_POR_LITRO;
+    
+    if (fillingActive) {
+      // Calcular litros llenados desde que empezó el llenado
+      volumeLlenado = litrosActuales - volumeTotal;
+      
+      // Solo detener si hay un límite establecido (no en modo manual)
+      if (targetVolume < 9999 && volumeLlenado >= targetVolume) {
+        stopFilling();
+        currentMenu = MENU_LLENADO;
+        menuCursor = 0;
+      }
+    } else {
+      volumeTotal = litrosActuales;
+    }
+    
+    // Actualizar display si estamos en menú llenado o llenado activo
+    if (currentMenu == MENU_LLENADO || currentMenu == MENU_LLENADO_ACTIVE) {
+      updateDisplay();
+    }
+    
+    // Guardar cada 5 segundos
+    static unsigned long lastSave = 0;
+    if (millis() - lastSave > 5000) {
+      lastSave = millis();
+      saveVolumeToEEPROM();
+    }
+  }
+}
+
+void displayLlenadoMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MENU LLENADO");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Volumen: ");
+  lcd.print(volumeTotal, 0);
+  lcd.print(" L");
+  
+  // Lógica de scroll corregida para 4 opciones en 2 líneas
+  int startIndex = 0;
+  if (menuCursor == 0 || menuCursor == 1) {
+    startIndex = 0;  // Mostrar opciones 0 y 1
+  } else if (menuCursor == 2 || menuCursor == 3) {
+    startIndex = 2;  // Mostrar opciones 2 y 3
+  }
+  
+  const char* opciones[] = {"Reiniciar Volumen", "Llenar Tanque", "Encender Bomba", "Atras"};
+  
+  for (int i = 0; i < 2; i++) { // Solo 2 líneas disponibles
+    int optionIndex = startIndex + i;
+    if (optionIndex < 4) {
+      lcd.setCursor(0, i + 2);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      
+      // Ajustar texto para que quepa en pantalla
+      if (optionIndex == 0) {
+        lcd.print("Reiniciar Vol.");
+      } else {
+        lcd.print(opciones[optionIndex]);
+      }
+    }
+  }
+  
+  // Indicadores de scroll
+  if (startIndex > 0) {
+    lcd.setCursor(19, 2);
+    lcd.print("^");
+  }
+  if (startIndex < 2) {
+    lcd.setCursor(19, 3);
+    lcd.print("v");
+  }
+}
+
+void displaySetVolume() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIGURAR LLENADO:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Litros a llenar:");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("> ");
+  lcd.print(targetVolume, 0);
+  lcd.print(" L");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Girar:Ajustar OK:Sig");
+}
+
+void displayConfirmFilling() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR LLENADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Llenar ");
+  lcd.print(targetVolume, 0);
+  lcd.print(" litros");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayFillingActive() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  
+  if (targetVolume >= 9999) {
+    lcd.print("BOMBA ACTIVA");
+  } else {
+    lcd.print("LLENANDO TANQUE");
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Llenado: ");
+  lcd.print(volumeLlenado, 1);
+  if (targetVolume < 9999) {
+    lcd.print("/");
+    lcd.print(targetVolume, 0);
+  }
+  lcd.print(" L");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Total: ");
+  lcd.print(volumeTotal + volumeLlenado, 1);
+  lcd.print(" L");
+  
+  lcd.setCursor(0, 3);
+  if (targetVolume >= 9999) {
+    lcd.print("Click para detener");
+  } else {
+    // Barra de progreso para modo automático
+    lcd.print("[");
+    int progress = (volumeLlenado / targetVolume) * 14;
+    for(int i = 0; i < 14; i++) {
+      lcd.print(i < progress ? "=" : " ");
+    }
+    lcd.print("]");
+  }
+}
+
+void displayStopConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("DETENER LLENADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Llenados: ");
+  lcd.print(volumeLlenado, 0);
+  lcd.print(" L");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayResetConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("REINICIAR VOLUMEN?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Se pondra en 0 L");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayAireacionMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("AIREACION");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Estado: ");
+  lcd.print(aireacionActive ? "Encendido" : "Apagado");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Encender");
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 1) {
+    lcd.print("> Apagar");
+  } else if (menuCursor == 2) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  Apagar");
+  }
+}
+
+void displayTimeConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR TIEMPO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Paso ");
+  lcd.print(currentConfigStep + 1);
+  lcd.print(": ");
+  lcd.print(sequences[selectedSequence].steps[currentConfigStep].hours);
+  lcd.print("h ");
+  lcd.print(sequences[selectedSequence].steps[currentConfigStep].minutes);
+  lcd.print("m ");
+  lcd.print(sequences[selectedSequence].steps[currentConfigStep].seconds);
+  lcd.print("s");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayExecutionMode() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MODO DE EJECUCION:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Realizar 1 vez");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Realizar en Bucle");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayDeleteAllConfirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("BORRAR TODAS?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Se borraran las 10");
+  lcd.setCursor(0, 2);
+  lcd.print("secuencias");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI  " : "  SI  ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayCO2Menu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INGRESO CO2");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Estado: ");
+  lcd.print(co2Active ? "Encendido" : "Apagado");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Encender");
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 1) {
+    lcd.print("> Apagar");
+  } else if (menuCursor == 2) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  Apagar");
+  }
+}
+
+void displayPhPanel() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("PANEL pH:");
+  
+  lcd.setCursor(12, 0);
+  lcd.print("pH:");
+  lcd.print(phValue, 1);
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Auto: ");
+  if (phControlActive) {
+    lcd.print(phLimitSet, 1);
+    // Indicar estado con color simulado
+    if (phValue > phLimitSet + 0.2) {
+      lcd.print(" ALK"); // Alcalino
+    } else if (phValue < phLimitSet - 0.2) {
+      lcd.print(" ACD"); // Ácido
+    } else {
+      lcd.print(" OK"); // Equilibrado
+    }
+  } else {
+    lcd.print("OFF");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Manual CO2");
+  if (co2InjectionActive) {
+    lcd.print(" [ON]");
+  }
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayPhSetLimit() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("FIJAR pH LIMITE:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("pH actual: ");
+  lcd.print(phValue, 2);
+  
+  lcd.setCursor(0, 2);
+  float limitValue = menuCursor / 10.0;
+  lcd.print("> pH limite: ");
+  lcd.print(limitValue, 1);
+  
+  lcd.setCursor(0, 3);
+  lcd.print("OK:Activar ESC:Salir");
+}
+
+void displayPhManualCO2() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INYECCION MANUAL:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Minutos CO2:");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("> ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("OK:Confirmar ESC:Atr");
+}
+
+void displayPhManualCO2Confirm() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR CO2?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Inyectar ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("SI");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("NO");
+}
+
+void displayPhManualCO2Active() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CO2 ACTIVO");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tiempo: ");
+  updateCO2Time();
+  lcd.print(co2MinutesRemaining);
+  lcd.print(":");
+  int seconds = 60 - ((millis() - co2StartTime) / 1000) % 60;
+  if (seconds < 10) lcd.print("0");
+  lcd.print(seconds);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Total: ");
+  lcd.print(co2MinutesSet);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para detener");
+}
+
+void startCO2Injection() {
+  co2InjectionActive = true;
+  co2MinutesRemaining = co2MinutesSet;
+  co2StartTime = millis();
+  pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+}
+
+void stopCO2Injection() {
+  co2InjectionActive = false;
+  co2MinutesRemaining = 0;
+  pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+}
+
+void updateCO2Time() {
+  if (co2InjectionActive) {
+    unsigned long elapsed = (millis() - co2StartTime) / 60000; // minutos
+    co2MinutesRemaining = co2MinutesSet - elapsed;
+    
+    if (co2MinutesRemaining <= 0) {
+      stopCO2Injection();
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+    }
+  }
+}
+
+void checkPhControl() {
+  if (phControlActive) {
+    if (phValue > phLimitSet + 0.2) {
+      // pH alcalino - activar CO2
+      if (!co2Active) {
+        co2Active = true;
+        pcfOutput.digitalWrite(P3, LOW);
+      }
+    } else if (phValue <= phLimitSet) {
+      // pH en rango - desactivar CO2
+      if (co2Active) {
+        co2Active = false;
+        pcfOutput.digitalWrite(P3, HIGH);
+      }
+    }
+  }
+}
+
+// Funciones vacías para obtener los valores
+float getVoltage() {
+    // TODO: Implementar lectura de voltaje
+    return 0.0;
+}
+
+float getCurrent() {
+    // TODO: Implementar lectura de corriente
+    return 0.0;
+}
+
+float getPower() {
+    // TODO: Calcular potencia (V * I)
+    return getVoltage() * getCurrent();
+}
+
+float getConsumption() {
+    // TODO: Calcular consumo acumulado en kWh
+    static float totalKwh = 0.0;
+    return totalKwh;
+}
+
+void displayPotenciaMenu() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("MEDIDOR POTENCIA:");
+    
+    // Mostrar voltaje
+    lcd.setCursor(0, 1);
+    lcd.print("V: ");
+    lcd.print(getVoltage(), 1);
+    lcd.print("V");
+    
+    // Mostrar corriente
+    lcd.setCursor(10, 1);
+    lcd.print("I: ");
+    lcd.print(getCurrent(), 2);
+    lcd.print("A");
+    
+    // Mostrar potencia
+    lcd.setCursor(0, 2);
+    lcd.print("P: ");
+    lcd.print(getPower(), 1);
+    lcd.print("W");
+    
+    // Mostrar consumo
+    lcd.setCursor(0, 3);
+    lcd.print("Consumo: ");
+    lcd.print(getConsumption(), 3);
+    lcd.print(" kWh");
+    
+    // Indicador para volver
+    lcd.setCursor(15, 3);
+    lcd.print("<Back");
+}
+
+void displaySensorTurbidezMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SENSOR TURBIDEZ:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Ver valor");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Calibracion");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayTurbCalibrationMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRAR TURBIDEZ:");
+  
+  int startIndex = 0;
+  if (menuCursor > 2) startIndex = menuCursor - 2;
+  if (startIndex > 2) startIndex = 2;
+  
+  const char* opciones[] = {"Muestra 1", "Muestra 2", "Muestra 3", "Calibrar", "Atras"};
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    if (optionIndex < 5) {
+      lcd.setCursor(0, i + 1);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      lcd.print(opciones[optionIndex]);
+      
+      // Mostrar si hay datos completos
+      if (optionIndex < 3) {
+        float v = 0, c = 0;
+        if (optionIndex == 0) { v = turbMuestra1V; c = turbMuestra1C; }
+        else if (optionIndex == 1) { v = turbMuestra2V; c = turbMuestra2C; }
+        else if (optionIndex == 2) { v = turbMuestra3V; c = turbMuestra3C; }
+        
+        lcd.setCursor(14, i + 1);
+        if (v > 0 && c > 0) {
+          lcd.print("[OK]");
+        } else if (v > 0 || c > 0) {
+          lcd.print("[..]");
+        }
+      }
+    }
+  }
+}
+
+void displayTurbSetMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MUESTRA ");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Mostrar voltaje actual
+  float voltage = getTurbidityVoltage();
+  lcd.setCursor(0, 1);
+  lcd.print("Voltaje: ");
+  lcd.print(voltage, 3);
+  lcd.print("V");
+  
+  // Configurar concentración
+  lcd.setCursor(0, 2);
+  lcd.print("MC/mL: ");
+  lcd.print(turbCalibValue);
+  lcd.print("  ");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para guardar");
+}
+
+void displayTurbConfirmMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR MUESTRA?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("V: ");
+  lcd.print(getTurbidityVoltage(), 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("C: ");
+  lcd.print(turbCalibValue);
+  lcd.print(" MC/mL");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayTurbCalibrating() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRANDO...");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Calculando");
+  lcd.setCursor(0, 2);
+  lcd.print("regresion...");
+  
+  delay(1500);
+  
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRACION OK!");
+  lcd.setCursor(0, 1);
+  lcd.print("a=");
+  lcd.print(turbCoefA, 2);
+  lcd.setCursor(0, 2);
+  lcd.print("b=");
+  lcd.print(turbCoefB, 2);
+  lcd.setCursor(0, 3);
+  lcd.print("c=");
+  lcd.print(turbCoefC, 2);
+  
+  delay(2000);
+  currentMenu = MENU_TURB_CALIBRATION;
+  menuCursor = 3;
+}
+
+float getTurbidityVoltage() {
+  // TODO: Leer del sensor de turbidez conectado al ADC
+  // Por ahora retorna un valor de prueba
+  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
+  float voltage = ads.computeVolts(adc);
+  return voltage;
+}
+
+void saveTurbidityMuestra(int muestra) {
+  float voltage = getTurbidityVoltage();
+  float concentration = (float)turbCalibValue;
+  
+  if (muestra == 0) {
+    turbMuestra1V = voltage;
+    turbMuestra1C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA1_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA1_C, concentration);
+  } else if (muestra == 1) {
+    turbMuestra2V = voltage;
+    turbMuestra2C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA2_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA2_C, concentration);
+  } else if (muestra == 2) {
+    turbMuestra3V = voltage;
+    turbMuestra3C = concentration;
+    EEPROM.put(EEPROM_TURB_MUESTRA3_V, voltage);
+    EEPROM.put(EEPROM_TURB_MUESTRA3_C, concentration);
+  }
+  EEPROM.commit();
+}
+
+void loadTurbidityCalibration() {
+  EEPROM.get(EEPROM_TURB_MUESTRA1_V, turbMuestra1V);
+  EEPROM.get(EEPROM_TURB_MUESTRA1_C, turbMuestra1C);
+  EEPROM.get(EEPROM_TURB_MUESTRA2_V, turbMuestra2V);
+  EEPROM.get(EEPROM_TURB_MUESTRA2_C, turbMuestra2C);
+  EEPROM.get(EEPROM_TURB_MUESTRA3_V, turbMuestra3V);
+  EEPROM.get(EEPROM_TURB_MUESTRA3_C, turbMuestra3C);
+  EEPROM.get(EEPROM_TURB_COEF_A, turbCoefA);
+  EEPROM.get(EEPROM_TURB_COEF_B, turbCoefB);
+  EEPROM.get(EEPROM_TURB_COEF_C, turbCoefC);
+}
+
+void performTurbidityCalibration() {
+  // Regresión polinomial de 2do grado: C = a*V^2 + b*V + c
+  // Usando mínimos cuadrados con 3 puntos
+  
+  float x1 = turbMuestra1V, y1 = turbMuestra1C;
+  float x2 = turbMuestra2V, y2 = turbMuestra2C;
+  float x3 = turbMuestra3V, y3 = turbMuestra3C;
+  
+  // Matriz para resolver sistema de ecuaciones
+  float denom = (x1 - x2) * (x1 - x3) * (x2 - x3);
+  
+  if (abs(denom) > 0.001) { // Evitar división por cero
+    turbCoefA = (x3*(y2-y1) + x2*(y1-y3) + x1*(y3-y2)) / denom;
+    turbCoefB = (x3*x3*(y1-y2) + x2*x2*(y3-y1) + x1*x1*(y2-y3)) / denom;
+    turbCoefC = (x2*x3*(x2-x3)*y1 + x3*x1*(x3-x1)*y2 + x1*x2*(x1-x2)*y3) / denom;
+    
+    // Guardar en EEPROM
+    EEPROM.put(EEPROM_TURB_COEF_A, turbCoefA);
+    EEPROM.put(EEPROM_TURB_COEF_B, turbCoefB);
+    EEPROM.put(EEPROM_TURB_COEF_C, turbCoefC);
+    EEPROM.commit();
+  }
+}
+
+float getTurbidityConcentration() {
+  // Si no hay calibración, retornar -1
+  if (turbCoefA == 0 && turbCoefB == 0 && turbCoefC == 0) {
+    return -1;
+  }
+  
+  float voltage = getTurbidityVoltage();
+  float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
+  
+  if (concentration < 0) concentration = 0;
+  if (concentration > 100) concentration = 100;
+  
+  return concentration;
+}
+
+void displayPhCalibrationMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRAR pH:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Muestra 1");
+  if (phMuestra1pH > 0) {
+    lcd.setCursor(14, 1);
+    lcd.print("[OK]");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Muestra 2");
+  if (phMuestra2pH > 0) {
+    lcd.setCursor(14, 2);
+    lcd.print("[OK]");
+  }
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 2) {
+    lcd.print("> Calibrar");
+  } else if (menuCursor == 3) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  ");
+    lcd.print(menuCursor == 2 ? "Calibrar" : "Atras");
+  }
+}
+
+void displayPhSetMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("pH MUESTRA ");
+  lcd.print(selectedPhMuestra + 1);
+  lcd.print(":");
+  
+  // Mostrar voltaje actual
+  float voltage = getPhVoltage();
+  lcd.setCursor(0, 1);
+  lcd.print("Voltaje: ");
+  lcd.print(voltage, 3);
+  lcd.print("V");
+  
+  // Configurar pH
+  lcd.setCursor(0, 2);
+  lcd.print("pH: ");
+  if (phCalibValue < 10) lcd.print(" ");
+  lcd.print(phCalibValue);
+  lcd.print(".0");
+  
+  // Barra visual del pH
+  lcd.setCursor(0, 3);
+  lcd.print("[");
+  int barPos = map(phCalibValue, 0, 14, 0, 14);
+  for (int i = 0; i < 14; i++) {
+    if (i == barPos) lcd.print("|");
+    else if (i == 7) lcd.print("-");
+    else lcd.print(" ");
+  }
+  lcd.print("]");
+}
+
+void displayPhConfirmMuestra() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONFIRMAR pH?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("V: ");
+  lcd.print(getPhVoltage(), 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("pH: ");
+  lcd.print(phCalibValue);
+  lcd.print(".0");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayPhCalibrating() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CALIBRANDO pH...");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Calculando");
+  lcd.setCursor(0, 2);
+  lcd.print("regresion lineal...");
+  
+  delay(1500);
+  
+  // Verificar si la calibración fue exitosa
+  if (phCoefM != 0) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("CALIBRACION OK!");
+    lcd.setCursor(0, 1);
+    lcd.print("m = ");
+    lcd.print(phCoefM, 3);
+    lcd.setCursor(0, 2);
+    lcd.print("b = ");
+    lcd.print(phCoefB, 3);
+    lcd.setCursor(0, 3);
+    lcd.print("pH = m*V + b");
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Error: Faltan");
+    lcd.setCursor(0, 2);
+    lcd.print("muestras!");
+  }
+  
+  delay(2000);
+  currentMenu = MENU_PH_CALIBRATION_MENU;
+  menuCursor = 2;
+}
+
+float getPhVoltage() {
+  // Leer del sensor de pH conectado al ADC
+  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
+  float voltage = ads.computeVolts(adc);
+  return voltage;
+}
+
+void savePhMuestra(int muestra) {
+  float voltage = getPhVoltage();
+  float ph = (float)phCalibValue;
+  
+  if (muestra == 0) {
+    phMuestra1V = voltage;
+    phMuestra1pH = ph;
+    EEPROM.put(EEPROM_PH_MUESTRA1_V, voltage);
+    EEPROM.put(EEPROM_PH_MUESTRA1_PH, ph);
+  } else if (muestra == 1) {
+    phMuestra2V = voltage;
+    phMuestra2pH = ph;
+    EEPROM.put(EEPROM_PH_MUESTRA2_V, voltage);
+    EEPROM.put(EEPROM_PH_MUESTRA2_PH, ph);
+  }
+  EEPROM.commit();
+}
+
+void loadPhCalibration() {
+  EEPROM.get(EEPROM_PH_MUESTRA1_V, phMuestra1V);
+  EEPROM.get(EEPROM_PH_MUESTRA1_PH, phMuestra1pH);
+  EEPROM.get(EEPROM_PH_MUESTRA2_V, phMuestra2V);
+  EEPROM.get(EEPROM_PH_MUESTRA2_PH, phMuestra2pH);
+  EEPROM.get(EEPROM_PH_COEF_M, phCoefM);
+  EEPROM.get(EEPROM_PH_COEF_B, phCoefB);
+}
+
+void performPhCalibration() {
+  // Regresión lineal: pH = m*V + b
+  // Usando 2 puntos
+  
+  if (phMuestra1V != phMuestra2V && phMuestra1pH > 0 && phMuestra2pH > 0) {
+    // Calcular pendiente
+    phCoefM = (phMuestra2pH - phMuestra1pH) / (phMuestra2V - phMuestra1V);
+    
+    // Calcular intercepto
+    phCoefB = phMuestra1pH - phCoefM * phMuestra1V;
+    
+    // Guardar en EEPROM
+    EEPROM.put(EEPROM_PH_COEF_M, phCoefM);
+    EEPROM.put(EEPROM_PH_COEF_B, phCoefB);
+    EEPROM.commit();
+  } else {
+    // Error - voltajes iguales o faltan muestras
+    phCoefM = 0;
+    phCoefB = 0;
+  }
+}
+
+float getPhValueCalibrated() {
+  // Si no hay calibración, retornar valor por defecto
+  if (phCoefM == 0) {
+    return 7.0; // pH neutro por defecto
+  }
+  
+  float voltage = getPhVoltage();
+  float ph = phCoefM * voltage + phCoefB;
+  
+  // Limitar el rango de pH entre 0 y 14
+  if (ph < 0) ph = 0;
+  if (ph > 14) ph = 14;
+  
+  return ph;
+}
+
+void displayAlmacenarMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ALMACENAR DATOS:");
+  
+  int startIndex = 0;
+  if (menuCursor > 2) startIndex = menuCursor - 2;
+  if (startIndex > 2) startIndex = 2;
+  
+  for (int i = 0; i < 3; i++) {
+    int optionIndex = startIndex + i;
+    if (optionIndex < 5) {
+      lcd.setCursor(0, i + 1);
+      lcd.print(menuCursor == optionIndex ? "> " : "  ");
+      
+      if (optionIndex < 4) {
+        lcd.print("Tipo ");
+        lcd.print(optionIndex + 1);
+        
+        // Mostrar si está activo
+        if (dataLogging[optionIndex]) {
+          lcd.setCursor(14, i + 1);
+          lcd.print("[REC]");
+        }
+      } else {
+        lcd.print("Atras");
+      }
+    }
+  }
+}
+
+void displayAlmacenarTypeMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("TIPO ");
+  lcd.print(selectedDataType + 1);
+  lcd.print(":");
+  
+  if (dataLogging[selectedDataType]) {
+    lcd.print(" [REC]");
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Almacenar");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Detener");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Borrar");
+}
+
+void displayAlmacenarConfirmStart() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("INICIAR GUARDADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Intervalo: ");
+  lcd.print(logInterval / 60000);
+  lcd.print(" min");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayAlmacenarConfirmStop() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("DETENER GUARDADO?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayAlmacenarConfirmDelete() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("BORRAR DATOS?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Tipo ");
+  lcd.print(selectedDataType + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("IRREVERSIBLE!");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void startDataLogging(int type) {
+  dataLogging[type] = true;
+  lastLogTime[type] = millis();
+  
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("Iniciando");
+  lcd.setCursor(0, 2);
+  lcd.print("almacenamiento...");
+  delay(1500);
+}
+
+void stopDataLogging(int type) {
+  dataLogging[type] = false;
+  
+  lcd.clear();
+  lcd.setCursor(0, 1);
+  lcd.print("Almacenamiento");
+  lcd.setCursor(0, 2);
+  lcd.print("detenido");
+  delay(1500);
+}
+
+void deleteDataLog(int type) {
+  String filename = "/tipo" + String(type + 1) + ".json";
+  
+  if (SD.exists(filename)) {
+    SD.remove(filename);
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Datos borrados");
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("No hay datos");
+  }
+  delay(1500);
+}
+
+void saveDataToSD(int type) {
+  String filename = "/tipo" + String(type + 1) + ".json";
+  File dataFile = SD.open(filename, FILE_APPEND);
+  
+  if (dataFile) {
+    // Crear objeto JSON
+    StaticJsonDocument<512> doc;
+    
+    // Obtener fecha y hora
+    DateTime now = rtc.now();
+    char dateTime[20];
+    sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", 
+            now.year(), now.month(), now.day(),
+            now.hour(), now.minute(), now.second());
+    
+    doc["timestamp"] = dateTime;
+    doc["tipo"] = type + 1;
+    doc["temperatura"] = temperature;
+    doc["turbidez"] = getTurbidityConcentration();
+    doc["pH"] = phValue;
+    doc["aireacion"] = aireacionActive ? "ON" : "OFF";
+    doc["CO2"] = co2Active ? "ON" : "OFF";
+    
+    // LEDs status
+    JsonObject leds = doc.createNestedObject("leds");
+    leds["blanco"] = map(pwmValues[0], 0, 100, 0, 255);
+    leds["rojo"] = map(pwmValues[1], 0, 100, 0, 255);
+    leds["verde"] = map(pwmValues[2], 0, 100, 0, 255);
+    leds["azul"] = map(pwmValues[3], 0, 100, 0, 255);
+    
+    // Escribir JSON al archivo
+    serializeJson(doc, dataFile);
+    dataFile.println(","); // Separador para múltiples objetos JSON
+    dataFile.close();
+  }
+}
+
+void checkDataLogging() {
+  unsigned long currentTime = millis();
+  
+  for (int i = 0; i < 4; i++) {
+    if (dataLogging[i]) {
+      if (currentTime - lastLogTime[i] >= logInterval) {
+        saveDataToSD(i);
+        lastLogTime[i] = currentTime;
+      }
+    }
+  }
+}
+
+void displayTurbMuestraDetail() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("MUESTRA ");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Obtener valores guardados
+  float storedV = 0, storedC = 0;
+  if (selectedMuestra == 0) {
+    storedV = turbMuestra1V;
+    storedC = turbMuestra1C;
+  } else if (selectedMuestra == 1) {
+    storedV = turbMuestra2V;
+    storedC = turbMuestra2C;
+  } else if (selectedMuestra == 2) {
+    storedV = turbMuestra3V;
+    storedC = turbMuestra3C;
+  }
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("V: ");
+  if (storedV > 0) {
+    lcd.print(storedV, 3);
+    lcd.print("V");
+  } else {
+    lcd.print("---");
+  }
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("C: ");
+  if (storedC > 0) {
+    lcd.print((int)storedC);
+    lcd.print(" MC/mL");
+  } else {
+    lcd.print("---");
+  }
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 2 ? "> " : "  ");
+  lcd.print("Atras");
+}
+
+void displayTurbSetVoltage() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("VOLTAJE M");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Valor almacenado
+  float storedV = 0;
+  if (selectedMuestra == 0) storedV = turbMuestra1V;
+  else if (selectedMuestra == 1) storedV = turbMuestra2V;
+  else if (selectedMuestra == 2) storedV = turbMuestra3V;
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Guardado: ");
+  if (storedV > 0) {
+    lcd.print(storedV, 3);
+    lcd.print("V");
+  } else {
+    lcd.print("---");
+  }
+  
+  // Valor actual
+  lcd.setCursor(0, 2);
+  lcd.print("Actual: ");
+  lcd.print(tempVoltageReading, 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 3);
+  lcd.print("Click para guardar");
+}
+
+void displayTurbConfirmVoltage() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR VOLTAJE?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Muestra ");
+  lcd.print(selectedMuestra + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("V: ");
+  lcd.print(tempVoltageReading, 3);
+  lcd.print("V");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+void displayTurbSetConcentration() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("CONCENTR. M");
+  lcd.print(selectedMuestra + 1);
+  lcd.print(":");
+  
+  // Valor almacenado
+  float storedC = 0;
+  if (selectedMuestra == 0) storedC = turbMuestra1C;
+  else if (selectedMuestra == 1) storedC = turbMuestra2C;
+  else if (selectedMuestra == 2) storedC = turbMuestra3C;
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Guardado: ");
+  if (storedC > 0) {
+    lcd.print((int)storedC);
+    lcd.print(" MC/mL");
+  } else {
+    lcd.print("---");
+  }
+  
+  // Valor a configurar
+  lcd.setCursor(0, 2);
+  lcd.print("Nuevo: ");
+  lcd.print(tempConcentrationValue);
+  lcd.print(" MC/mL");
+  
+  // Barra visual
+  lcd.setCursor(0, 3);
+  lcd.print("[");
+  int barLength = map(tempConcentrationValue, 0, 100, 0, 16);
+  for (int i = 0; i < 16; i++) {
+    if (i < barLength) lcd.print("=");
+    else lcd.print(" ");
+  }
+  lcd.print("]");
+}
+
+void displayTurbConfirmConcentration() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR CONC.?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Muestra ");
+  lcd.print(selectedMuestra + 1);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("C: ");
+  lcd.print(tempConcentrationValue);
+  lcd.print(" MC/mL");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
+}
+
+
+
+void handleEmergencyState() {
+  static bool lastEmergencyState = false;
+  bool currentEmergencyState = digitalRead(EMERGENCY_PIN) == HIGH;  // HIGH = presionado
+  
+  // Detectar cuando se presiona el botón (transición de LOW a HIGH)
+  if (currentEmergencyState && !lastEmergencyState) {
+    emergencyActive = true;
+    
+    // Apagar todas las salidas
+    for (int i = 0; i < 4; i++) {
+      pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
+      ledcWrite(ledPins[i], 0);        // LEDs PWM
+    }
+    
+    // Detener llenado y aireación si están activos
+    fillingActive = false;
+    aireacionActive = false;
+    co2Active = false;
+    
+    // Detener secuencias si están corriendo
+    if (sequenceRunning) {
+      stopSequence();
+    }
+    
+    // Mostrar mensaje de emergencia
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("**  EMERGENCIA  **");
+    lcd.setCursor(0, 1);
+    lcd.print("BOTON PRESIONADO");
+    lcd.setCursor(0, 2);
+    lcd.print("Todas las salidas");
+    lcd.setCursor(0, 3);
+    lcd.print("DESACTIVADAS");
+  }
+  
+  // Detectar cuando se suelta el botón (transición de HIGH a LOW)
+  else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
+    emergencyActive = false;
+    
+    // Volver al menú principal
+    currentMenu = MENU_MAIN;
+    menuCursor = 0;
+    
+    // Mostrar mensaje temporal
+    lcd.clear();
+    lcd.setCursor(0, 1);
+    lcd.print("Emergencia");
+    lcd.setCursor(0, 2);
+    lcd.print("Desactivada");
+    delay(1500);
+    
+    updateDisplay();  // Mostrar menú principal
+  }
+  
+  // Actualizar estado anterior
+  lastEmergencyState = currentEmergencyState;
+}
