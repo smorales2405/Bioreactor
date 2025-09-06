@@ -269,23 +269,6 @@ void IRAM_ATTR handleEmergency() {
   emergencyActive = true;
 }
 
-void IRAM_ATTR readEncoderSimple() {
-    static unsigned long lastInterruptTime = 0;
-    unsigned long interruptTime = millis();
-    
-    // Debounce de 5ms
-    if (interruptTime - lastInterruptTime > 5) {
-        // Leer el estado del DT para determinar dirección
-        if (digitalRead(ENCODER_DT) != digitalRead(ENCODER_CLK)) {
-            encoderPos++;
-        } else {
-            encoderPos--;
-        }
-        encoderChanged = true;
-        lastInterruptTime = interruptTime;
-    }
-}
-
 void setup() {
   Serial.begin(115200);
   Serial.println("Iniciando sistema integrado...");
@@ -318,7 +301,7 @@ void setup() {
   
   // Configurar pines
   pinMode(ENCODER_CLK, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
+  //attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
   pinMode(ENCODER_DT, INPUT);
   //attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
   pinMode(ENCODER_SW, INPUT_PULLUP);
@@ -907,25 +890,25 @@ void readSensors() {
 }
 
 void handleEncoder() {
-    static int lastEncoderPos = 0;
+    static int lastClkState = HIGH;
+    static unsigned long lastDebounceTime = 0;
+    const unsigned long debounceDelay = 5; // 5ms
     
-    // Verificar si hubo cambio en el encoder
-    if (encoderChanged) {
-        noInterrupts();
-        int currentPos = encoderPos;
-        encoderChanged = false;
-        interrupts();
+    int clkState = digitalRead(ENCODER_CLK);
+    
+    if (clkState != lastClkState && (millis() - lastDebounceTime) > debounceDelay) {
+        lastDebounceTime = millis();
         
-        // Detectar dirección del movimiento
-        if (currentPos > lastEncoderPos) {
-            incrementCursor();
-            updateDisplay();
-        } else if (currentPos < lastEncoderPos) {
-            decrementCursor();
+        if (clkState == LOW) {
+            if (digitalRead(ENCODER_DT) != clkState) {
+                incrementCursor();
+            } else {
+                decrementCursor();
+            }
             updateDisplay();
         }
         
-        lastEncoderPos = currentPos;
+        lastClkState = clkState;
     }
 }
 
