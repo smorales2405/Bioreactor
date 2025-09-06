@@ -14,8 +14,8 @@
 #include <PCF8574.h>
 
 // === Configuración WiFi ===
-const char* ap_ssid = "ESP32-Bioreactor";
-const char* ap_password = "bioreactor2025";
+const char* ap_ssid = "ESP32-Bioreactor2";
+const char* ap_password = "bioreactor2";
 
 // === LCD 20x4 ===
 LiquidCrystal_I2C lcd(0x27, 20, 4);
