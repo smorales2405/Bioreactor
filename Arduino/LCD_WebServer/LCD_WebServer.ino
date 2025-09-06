@@ -370,7 +370,7 @@ void setup() {
   //  lcd.print("OK");
   //}
   
-  delay(15000);
+  //delay(15000);
 
   // Inicializar SD
   lcd.setCursor(0, 3);
@@ -432,7 +432,7 @@ void loop() {
     return;
   }  
 
-  handleEncoder();
+  //handleEncoder();
   handleButtons();
   
   
@@ -935,7 +935,7 @@ void handleEncoder() {
     decrementCursor();
     
   last_state = current_state;
-  lastClk = clkState 
+  lastClk = clkState; 
 
 }
 
@@ -1000,12 +1000,6 @@ void handleExtraButton() {
       stopCO2Injection();
       currentMenu = MENU_PH_PANEL;
       menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_AIREACION:
-      currentMenu = MENU_MAIN;
-      menuCursor = 3;
       updateDisplay();
       break;
   }
@@ -3253,11 +3247,12 @@ void displayLlenadoMenu() {
   lcd.print(volumeTotal, 0);
   lcd.print(" L");
   
-  // Si hay 4 o más opciones, necesitamos scroll
+  // Lógica de scroll corregida para 4 opciones en 2 líneas
   int startIndex = 0;
-  if (menuCursor > 2) {
-    startIndex = menuCursor - 2;
-    if (startIndex > 1) startIndex = 1; // Ajustar para 4 opciones
+  if (menuCursor == 0 || menuCursor == 1) {
+    startIndex = 0;  // Mostrar opciones 0 y 1
+  } else if (menuCursor == 2 || menuCursor == 3) {
+    startIndex = 2;  // Mostrar opciones 2 y 3
   }
   
   const char* opciones[] = {"Reiniciar Volumen", "Llenar Tanque", "Encender Bomba", "Atras"};
@@ -3267,16 +3262,22 @@ void displayLlenadoMenu() {
     if (optionIndex < 4) {
       lcd.setCursor(0, i + 2);
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
-      lcd.print(opciones[optionIndex]);
+      
+      // Ajustar texto para que quepa en pantalla
+      if (optionIndex == 0) {
+        lcd.print("Reiniciar Vol.");
+      } else {
+        lcd.print(opciones[optionIndex]);
+      }
     }
   }
   
-  // Indicadores de scroll si es necesario
+  // Indicadores de scroll
   if (startIndex > 0) {
     lcd.setCursor(19, 2);
     lcd.print("^");
   }
-  if (startIndex < 1) {
+  if (startIndex < 2) {
     lcd.setCursor(19, 3);
     lcd.print("v");
   }
