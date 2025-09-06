@@ -113,6 +113,16 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
 #define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
 
+// Direcciones EEPROM para estado del sistema
+#define EEPROM_SYSTEM_STATE 300      // 1 byte - flags de estado
+#define EEPROM_LED_STATES 301        // 4 bytes - estados de LEDs
+#define EEPROM_LED_PWM 305           // 4 bytes - valores PWM
+#define EEPROM_SEQUENCE_RUNNING 309  // 1 byte - secuencia activa
+#define EEPROM_SEQUENCE_ID 310       // 1 byte - ID de secuencia
+#define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
+#define EEPROM_AIREACION 312         // 1 byte - estado aireación
+#define EEPROM_CO2 313               // 1 byte - estado CO2
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -277,6 +287,7 @@ void setup() {
   EEPROM.begin(512);
   loadTurbidityCalibration();
   loadPhCalibration(); 
+  loadSystemState();
 
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
@@ -286,6 +297,25 @@ void setup() {
   EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
   if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
     logInterval = 300000; // 5 minutos por defecto
+  }
+
+  // Verificar y reanudar logging si estaba activo
+  for (int i = 0; i < 4; i++) {
+    // Leer flag de logging desde archivo de configuración
+    String configFile = "/config_tipo" + String(i + 1) + ".txt";
+    if (SD.exists(configFile)) {
+      File file = SD.open(configFile, FILE_READ);
+      if (file) {
+        String state = file.readStringUntil('\n');
+        if (state == "LOGGING") {
+          dataLogging[i] = true;
+          lastLogTime[i] = millis();
+          Serial.print("Reanudando logging Tipo ");
+          Serial.println(i + 1);
+        }
+        file.close();
+      }
+    }
   }
 
   // Inicializar I2C y LCD
@@ -316,8 +346,8 @@ void setup() {
   pcfInput.pinMode(P1, INPUT);
   pcfInput.begin();
 
-  pcfOutput.pinMode(P1, OUTPUT);  // Aireación
-  pcfOutput.pinMode(P2, OUTPUT);  // Bomba de agua
+  pcfOutput.pinMode(P1, OUTPUT);  // Bomba de Agua
+  pcfOutput.pinMode(P2, OUTPUT);  // Aireacion
   pcfOutput.pinMode(P3, OUTPUT);  // Solenoide
   pcfOutput.pinMode(P4, OUTPUT);  // LEd
   pcfOutput.digitalWrite(P1, HIGH);
@@ -465,6 +495,68 @@ void loop() {
   updateDisplay();
   }
 
+}
+
+void saveSystemState() {
+  // Guardar estados de LEDs
+  for (int i = 0; i < 4; i++) {
+    EEPROM.write(EEPROM_LED_STATES + i, ledStates[i] ? 1 : 0);
+    EEPROM.write(EEPROM_LED_PWM + i, pwmValues[i]);
+  }
+  
+  // Guardar estado de secuencia
+  EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
+  EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
+  EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
+  
+  // Guardar estados de aireación y CO2
+  EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
+  EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
+  
+  EEPROM.commit();
+}
+
+void loadSystemState() {
+  // Cargar estados de LEDs
+  for (int i = 0; i < 4; i++) {
+    ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
+    pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
+    
+    // Aplicar valores a los LEDs
+    if (ledStates[i]) {
+      int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
+      ledcWrite(ledPins[i], pwmValue);
+    }
+  }
+  
+  // Cargar estado de secuencia
+  bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
+  if (wasSequenceRunning) {
+    selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
+    currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
+    
+    // Verificar si la secuencia es válida antes de reanudar
+    if (selectedSequence < 10 && sequences[selectedSequence].configured) {
+      sequenceRunning = true;
+      stepStartTime = rtc.now();
+      applySequenceStep(currentSequenceStep);
+      
+      Serial.println("Reanudando secuencia tras reinicio");
+    }
+  }
+  
+  // Cargar y aplicar estados de aireación y CO2
+  aireacionActive = EEPROM.read(EEPROM_AIREACION) == 1;
+  if (aireacionActive) {
+    pcfOutput.digitalWrite(P2, LOW);
+    Serial.println("Aireación reactivada tras reinicio");
+  }
+  
+  co2Active = EEPROM.read(EEPROM_CO2) == 1;
+  if (co2Active) {
+    pcfOutput.digitalWrite(P3, LOW);
+    Serial.println("CO2 reactivado tras reinicio");
+  }
 }
 
 void setupWiFi() {
@@ -1701,6 +1793,7 @@ void handleSelection() {
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
+      saveSystemState();
       break;
       
     case MENU_INTENSITY:
@@ -1710,6 +1803,7 @@ void handleSelection() {
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
+      saveSystemState();
       break;
       
   case MENU_SEQ_LIST:
@@ -1969,6 +2063,7 @@ void handleSelection() {
         currentMenu = MENU_MAIN;
         menuCursor = 3;
       }
+      saveSystemState();
       break;
 
     case MENU_SEQ_EXECUTION_MODE:
@@ -2044,6 +2139,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
     }
+    saveSystemState();
     break;
 
   case MENU_POTENCIA:
@@ -2989,6 +3085,7 @@ void startSequence() {
   Serial.print("Secuencia ");
   Serial.print(selectedSequence + 1);
   Serial.println(" iniciada");
+  saveSystemState();
 }
 
 void stopSequence() {
@@ -3001,6 +3098,7 @@ void stopSequence() {
   }
   
   Serial.println("Secuencia detenida");
+  saveSystemState();
 }
 
 void applySequenceStep(int step) {
@@ -4201,6 +4299,14 @@ void startDataLogging(int type) {
   dataLogging[type] = true;
   lastLogTime[type] = millis();
   
+  // Crear archivo de configuración para mantener estado
+  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  File file = SD.open(configFile, FILE_WRITE);
+  if (file) {
+    file.println("LOGGING");
+    file.close();
+  }
+  
   lcd.clear();
   lcd.setCursor(0, 1);
   lcd.print("Iniciando");
@@ -4211,6 +4317,10 @@ void startDataLogging(int type) {
 
 void stopDataLogging(int type) {
   dataLogging[type] = false;
+  
+  // Eliminar archivo de configuración
+  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  SD.remove(configFile);
   
   lcd.clear();
   lcd.setCursor(0, 1);
