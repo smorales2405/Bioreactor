@@ -468,7 +468,6 @@ void loop() {
   handleEncoder();
   handleButtons();
   
-  
   // Leer sensores periódicamente
   if (millis() - lastSensorRead > sensorReadInterval) {
     lastSensorRead = millis();
@@ -2457,7 +2456,8 @@ void displayWebServerMenu() {
   lcd.print(ap_password);
 
   lcd.setCursor(0, 3);
-  lcd.print("IP: 192.168.4.1");
+  lcd.print("IP: ");
+  lcd.print(WiFi.softAPIP());
 }
 
 void displaySensorPhMenu() {
