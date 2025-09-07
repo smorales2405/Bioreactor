@@ -612,6 +612,10 @@ void setupWebServer() {
   server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SD, "/styles.css", "text/css");
   });
+
+  server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/app.js", "text/js");
+  });  
   
   // API para sensores
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
