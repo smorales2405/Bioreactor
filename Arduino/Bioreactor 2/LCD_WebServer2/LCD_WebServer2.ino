@@ -113,6 +113,16 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
 #define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
 
+// Direcciones EEPROM para estado del sistema
+#define EEPROM_SYSTEM_STATE 300      // 1 byte - flags de estado
+#define EEPROM_LED_STATES 301        // 4 bytes - estados de LEDs
+#define EEPROM_LED_PWM 305           // 4 bytes - valores PWM
+#define EEPROM_SEQUENCE_RUNNING 309  // 1 byte - secuencia activa
+#define EEPROM_SEQUENCE_ID 310       // 1 byte - ID de secuencia
+#define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
+#define EEPROM_AIREACION 312         // 1 byte - estado aireación
+#define EEPROM_CO2 313               // 1 byte - estado CO2
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -177,6 +187,7 @@ enum MenuState {
   MENU_SEQ_DELETE_ALL_CONFIRM,  
   MENU_SEQ_CONFIRM_SAVE,
   MENU_SEQ_RUNNING,
+  MENU_SEQ_RUNNING_OPTIONS,
   MENU_SEQ_STOP_CONFIRM,
   MENU_SEQ_EXIT_CONFIG_CONFIRM,
   MENU_LLENADO,
@@ -269,23 +280,6 @@ void IRAM_ATTR handleEmergency() {
   emergencyActive = true;
 }
 
-void IRAM_ATTR readEncoderSimple() {
-    static unsigned long lastInterruptTime = 0;
-    unsigned long interruptTime = millis();
-    
-    // Debounce de 5ms
-    if (interruptTime - lastInterruptTime > 5) {
-        // Leer el estado del DT para determinar dirección
-        if (digitalRead(ENCODER_DT) != digitalRead(ENCODER_CLK)) {
-            encoderPos++;
-        } else {
-            encoderPos--;
-        }
-        encoderChanged = true;
-        lastInterruptTime = interruptTime;
-    }
-}
-
 void setup() {
   Serial.begin(115200);
   Serial.println("Iniciando sistema integrado...");
@@ -305,6 +299,25 @@ void setup() {
     logInterval = 300000; // 5 minutos por defecto
   }
 
+  // Verificar y reanudar logging si estaba activo
+  for (int i = 0; i < 4; i++) {
+    // Leer flag de logging desde archivo de configuración
+    String configFile = "/config_tipo" + String(i + 1) + ".txt";
+    if (SD.exists(configFile)) {
+      File file = SD.open(configFile, FILE_READ);
+      if (file) {
+        String state = file.readStringUntil('\n');
+        if (state == "LOGGING") {
+          dataLogging[i] = true;
+          lastLogTime[i] = millis();
+          Serial.print("Reanudando logging Tipo ");
+          Serial.println(i + 1);
+        }
+        file.close();
+      }
+    }
+  }
+
   // Inicializar I2C y LCD
   Wire.begin();
   lcd.init();
@@ -318,7 +331,7 @@ void setup() {
   
   // Configurar pines
   pinMode(ENCODER_CLK, INPUT);
-  attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
+  //attachInterrupt(digitalPinToInterrupt(ENCODER_CLK), readEncoderSimple, FALLING);
   pinMode(ENCODER_DT, INPUT);
   //attachInterrupt(digitalPinToInterrupt(ENCODER_DT), readEncoder, CHANGE);
   pinMode(ENCODER_SW, INPUT_PULLUP);
@@ -333,8 +346,8 @@ void setup() {
   pcfInput.pinMode(P1, INPUT);
   pcfInput.begin();
 
-  pcfOutput.pinMode(P1, OUTPUT);  // Aireación
-  pcfOutput.pinMode(P2, OUTPUT);  // Bomba de agua
+  pcfOutput.pinMode(P1, OUTPUT);  // Bomba de Agua
+  pcfOutput.pinMode(P2, OUTPUT);  // Aireacion
   pcfOutput.pinMode(P3, OUTPUT);  // Solenoide
   pcfOutput.pinMode(P4, OUTPUT);  // LEd
   pcfOutput.digitalWrite(P1, HIGH);
@@ -423,6 +436,8 @@ void setup() {
   
   delay(1000);
   
+  loadSystemState();
+
   // Conectar WiFi
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -482,6 +497,68 @@ void loop() {
   updateDisplay();
   }
 
+}
+
+void saveSystemState() {
+  // Guardar estados de LEDs
+  for (int i = 0; i < 4; i++) {
+    EEPROM.write(EEPROM_LED_STATES + i, ledStates[i] ? 1 : 0);
+    EEPROM.write(EEPROM_LED_PWM + i, pwmValues[i]);
+  }
+  
+  // Guardar estado de secuencia
+  EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
+  EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
+  EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
+  
+  // Guardar estados de aireación y CO2
+  EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
+  EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
+  
+  EEPROM.commit();
+}
+
+void loadSystemState() {
+  // Cargar estados de LEDs
+  for (int i = 0; i < 4; i++) {
+    ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
+    pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
+    
+    // Aplicar valores a los LEDs
+    if (ledStates[i]) {
+      int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
+      ledcWrite(ledPins[i], pwmValue);
+    }
+  }
+  
+  // Cargar estado de secuencia
+  bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
+  if (wasSequenceRunning) {
+    selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
+    currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
+    
+    // Verificar si la secuencia es válida antes de reanudar
+    if (selectedSequence < 10 && sequences[selectedSequence].configured) {
+      sequenceRunning = true;
+      stepStartTime = rtc.now();
+      applySequenceStep(currentSequenceStep);
+      
+      Serial.println("Reanudando secuencia tras reinicio");
+    }
+  }
+  
+  // Cargar y aplicar estados de aireación y CO2
+  aireacionActive = EEPROM.read(EEPROM_AIREACION) == 1;
+  if (aireacionActive) {
+    pcfOutput.digitalWrite(P2, LOW);
+    Serial.println("Aireación reactivada tras reinicio");
+  }
+  
+  co2Active = EEPROM.read(EEPROM_CO2) == 1;
+  if (co2Active) {
+    pcfOutput.digitalWrite(P3, LOW);
+    Serial.println("CO2 reactivado tras reinicio");
+  }
 }
 
 void setupWiFi() {
@@ -907,25 +984,25 @@ void readSensors() {
 }
 
 void handleEncoder() {
-    static int lastEncoderPos = 0;
+    static int lastClkState = HIGH;
+    static unsigned long lastDebounceTime = 0;
+    const unsigned long debounceDelay = 5; // 5ms
     
-    // Verificar si hubo cambio en el encoder
-    if (encoderChanged) {
-        noInterrupts();
-        int currentPos = encoderPos;
-        encoderChanged = false;
-        interrupts();
+    int clkState = digitalRead(ENCODER_CLK);
+    
+    if (clkState != lastClkState && (millis() - lastDebounceTime) > debounceDelay) {
+        lastDebounceTime = millis();
         
-        // Detectar dirección del movimiento
-        if (currentPos > lastEncoderPos) {
-            incrementCursor();
-            updateDisplay();
-        } else if (currentPos < lastEncoderPos) {
-            decrementCursor();
+        if (clkState == LOW) {
+            if (digitalRead(ENCODER_DT) != clkState) {
+                incrementCursor();
+            } else {
+                decrementCursor();
+            }
             updateDisplay();
         }
         
-        lastEncoderPos = currentPos;
+        lastClkState = clkState;
     }
 }
 
@@ -945,7 +1022,7 @@ void handleButtons() {
   if (pcfInput.digitalRead(P1) == 0) {
     if (millis() - lastExtraButtonPress > debounceDelay) {
       lastExtraButtonPress = millis();
-      handleExtraButton();
+      //handleExtraButton();
     }
   }
 }
@@ -1174,6 +1251,10 @@ void incrementCursor() {
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
 
+    case MENU_SEQ_RUNNING_OPTIONS:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_CO2:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // 3 opciones
@@ -1333,6 +1414,10 @@ void decrementCursor() {
     case MENU_SEQ_CONFIRM_SAVE:
     case MENU_SEQ_STOP_CONFIRM:
     case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_SEQ_RUNNING_OPTIONS:
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
 
@@ -1666,6 +1751,7 @@ void handleSelection() {
       menuCursor = 1;
       break;
 
+    // Modificar en handleSelection(), caso MENU_ACTION:
     case MENU_ACTION:
       if (menuCursor == 0) {
         // On/Off
@@ -1678,9 +1764,14 @@ void handleSelection() {
         currentMenu = MENU_LED_SELECT;
         menuCursor = 0;
       } else if (menuCursor == 2) {
-        // Secuencias
-        currentMenu = MENU_SEQ_LIST;
-        menuCursor = 0;
+        // Secuencias - verificar si hay una activa
+        if (sequenceRunning) {
+          // Si hay secuencia activa, ir directamente a mostrarla
+          currentMenu = MENU_SEQ_RUNNING;
+        } else {
+          currentMenu = MENU_SEQ_LIST;
+          menuCursor = 0;
+        }
       } else {
         // Atrás
         currentMenu = MENU_MAIN;
@@ -1718,6 +1809,7 @@ void handleSelection() {
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
+      saveSystemState();
       break;
       
     case MENU_INTENSITY:
@@ -1727,6 +1819,7 @@ void handleSelection() {
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
+      saveSystemState();
       break;
       
   case MENU_SEQ_LIST:
@@ -1857,10 +1950,23 @@ void handleSelection() {
       break;
       
     case MENU_SEQ_RUNNING:
-      currentMenu = MENU_SEQ_STOP_CONFIRM;
-      menuCursor = 1;
+      currentMenu = MENU_SEQ_RUNNING_OPTIONS;
+      menuCursor = 0;
       break;
-      
+
+    case MENU_SEQ_RUNNING_OPTIONS:
+      if (menuCursor == 0) {
+        // Detener Secuencia
+        currentMenu = MENU_SEQ_STOP_CONFIRM;
+        menuCursor = 1;
+      } else {
+        // Ir al Menú Principal sin detener la secuencia
+        currentMenu = MENU_MAIN;
+        menuCursor = 1;  // Cursor en "LEDs"
+        // La secuencia continúa ejecutándose en segundo plano
+      }
+      break;
+
     case MENU_SEQ_STOP_CONFIRM:
       if (menuCursor == 0) {
         stopSequence();
@@ -1986,6 +2092,7 @@ void handleSelection() {
         currentMenu = MENU_MAIN;
         menuCursor = 3;
       }
+      saveSystemState();
       break;
 
     case MENU_SEQ_EXECUTION_MODE:
@@ -2061,6 +2168,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
     }
+    saveSystemState();
     break;
 
   case MENU_POTENCIA:
@@ -2270,6 +2378,9 @@ void updateDisplay() {
     case MENU_SEQ_EXIT_CONFIG_CONFIRM:
       displaySeqExitConfirm();
       break;
+    case MENU_SEQ_RUNNING_OPTIONS:
+      displaySeqRunningOptions();
+      break;
     case MENU_LLENADO:
       displayLlenadoMenu();
       break;
@@ -2329,6 +2440,11 @@ void displayMainMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SISTEMA PRINCIPAL:");
   
+  if (sequenceRunning) {
+    lcd.setCursor(15, 0);
+    lcd.print("[SEQ]");
+  }
+
   // Con 6 opciones, necesitamos scroll
   int startIndex = 0;
   if (menuCursor > 2) {
@@ -2372,6 +2488,12 @@ void displayActionMenu() {
   lcd.setCursor(0, 0);
   lcd.print("CONTROL LEDs:");
   
+  // Indicador de secuencia activa
+  if (sequenceRunning) {
+    lcd.setCursor(14, 0);
+    lcd.print("[ACT]");
+  }
+
   int startIndex = 0;
   if (menuCursor > 2) startIndex = 1;
   
@@ -2388,6 +2510,9 @@ void displayActionMenu() {
     } else if (optionIndex == 2) {
       lcd.print(menuCursor == 2 ? "> " : "  ");
       lcd.print("Secuencias");
+      if (sequenceRunning) {
+      lcd.print(" *");  // Indicador de que hay una activa
+      }
     } else if (optionIndex == 3) {
       lcd.print(menuCursor == 3 ? "> " : "  ");
       lcd.print("Atras");
@@ -3006,6 +3131,7 @@ void startSequence() {
   Serial.print("Secuencia ");
   Serial.print(selectedSequence + 1);
   Serial.println(" iniciada");
+  saveSystemState();
 }
 
 void stopSequence() {
@@ -3018,6 +3144,7 @@ void stopSequence() {
   }
   
   Serial.println("Secuencia detenida");
+  saveSystemState();
 }
 
 void applySequenceStep(int step) {
@@ -3163,6 +3290,29 @@ void loadAllSequences() {
   for (int i = 0; i < 10; i++) {
     loadSequence(i);
   }
+}
+
+void displaySeqRunningOptions() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SECUENCIA ACTIVA");
+  
+  // Mostrar info de la secuencia actual
+  lcd.setCursor(0, 1);
+  lcd.print("Seq");
+  lcd.print(selectedSequence + 1);
+  lcd.print(" Paso:");
+  lcd.print(currentSequenceStep + 1);
+  lcd.print("/");
+  lcd.print(sequences[selectedSequence].stepCount);
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Detener Secuencia");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Menu Principal");
 }
 
 void startFilling() {
@@ -4218,6 +4368,14 @@ void startDataLogging(int type) {
   dataLogging[type] = true;
   lastLogTime[type] = millis();
   
+  // Crear archivo de configuración para mantener estado
+  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  File file = SD.open(configFile, FILE_WRITE);
+  if (file) {
+    file.println("LOGGING");
+    file.close();
+  }
+  
   lcd.clear();
   lcd.setCursor(0, 1);
   lcd.print("Iniciando");
@@ -4229,6 +4387,10 @@ void startDataLogging(int type) {
 void stopDataLogging(int type) {
   dataLogging[type] = false;
   
+  // Eliminar archivo de configuración
+  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  SD.remove(configFile);
+  
   lcd.clear();
   lcd.setCursor(0, 1);
   lcd.print("Almacenamiento");
@@ -4238,13 +4400,15 @@ void stopDataLogging(int type) {
 }
 
 void deleteDataLog(int type) {
-  String filename = "/tipo" + String(type + 1) + ".json";
+  String filename = "/datos_tipo" + String(type + 1) + ".txt";
   
   if (SD.exists(filename)) {
     SD.remove(filename);
     lcd.clear();
     lcd.setCursor(0, 1);
     lcd.print("Datos borrados");
+    Serial.print("Archivo eliminado: ");
+    Serial.println(filename);
   } else {
     lcd.clear();
     lcd.setCursor(0, 1);
@@ -4254,39 +4418,113 @@ void deleteDataLog(int type) {
 }
 
 void saveDataToSD(int type) {
-  String filename = "/tipo" + String(type + 1) + ".json";
+  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  
+  // Verificar si el archivo existe, si no, crear con encabezados
+  bool fileExists = SD.exists(filename);
+  
   File dataFile = SD.open(filename, FILE_APPEND);
   
   if (dataFile) {
-    // Crear objeto JSON
-    StaticJsonDocument<512> doc;
+    // Si es un archivo nuevo, agregar encabezados
+    if (!fileExists) {
+      dataFile.println("Fecha;Hora;Tipo;Temperatura_C;Turbidez_MCmL;pH;Volumen_L;Aireacion;CO2;LED_Blanco;LED_Rojo;LED_Verde;LED_Azul;Secuencia_Activa;Secuencia_ID;Paso_Actual;Total_Pasos;Tiempo_Paso_seg;Modo_Bucle");
+    }
     
     // Obtener fecha y hora
     DateTime now = rtc.now();
-    char dateTime[20];
-    sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", 
-            now.year(), now.month(), now.day(),
-            now.hour(), now.minute(), now.second());
     
-    doc["timestamp"] = dateTime;
-    doc["tipo"] = type + 1;
-    doc["temperatura"] = temperature;
-    doc["turbidez"] = getTurbidityConcentration();
-    doc["pH"] = phValue;
-    doc["aireacion"] = aireacionActive ? "ON" : "OFF";
-    doc["CO2"] = co2Active ? "ON" : "OFF";
+    // Escribir fecha
+    dataFile.print(now.year());
+    dataFile.print("/");
+    if (now.month() < 10) dataFile.print("0");
+    dataFile.print(now.month());
+    dataFile.print("/");
+    if (now.day() < 10) dataFile.print("0");
+    dataFile.print(now.day());
+    dataFile.print(";");
     
-    // LEDs status
-    JsonObject leds = doc.createNestedObject("leds");
-    leds["blanco"] = map(pwmValues[0], 0, 100, 0, 255);
-    leds["rojo"] = map(pwmValues[1], 0, 100, 0, 255);
-    leds["verde"] = map(pwmValues[2], 0, 100, 0, 255);
-    leds["azul"] = map(pwmValues[3], 0, 100, 0, 255);
+    // Escribir hora
+    if (now.hour() < 10) dataFile.print("0");
+    dataFile.print(now.hour());
+    dataFile.print(":");
+    if (now.minute() < 10) dataFile.print("0");
+    dataFile.print(now.minute());
+    dataFile.print(":");
+    if (now.second() < 10) dataFile.print("0");
+    dataFile.print(now.second());
+    dataFile.print(";");
     
-    // Escribir JSON al archivo
-    serializeJson(doc, dataFile);
-    dataFile.println(","); // Separador para múltiples objetos JSON
+    // Tipo de experimento
+    dataFile.print(type + 1);
+    dataFile.print(";");
+    
+    // Sensores
+    dataFile.print(temperature, 2);
+    dataFile.print(";");
+    
+    float turbidityValue = getTurbidityConcentration();
+    if (turbidityValue >= 0) {
+      dataFile.print(turbidityValue, 2);
+    } else {
+      dataFile.print("N/A");
+    }
+    dataFile.print(";");
+    
+    dataFile.print(phValue, 2);
+    dataFile.print(";");
+    
+    // Volumen total
+    dataFile.print(volumeTotal, 2);
+    dataFile.print(";");
+    
+    // Estados de aireación y CO2
+    dataFile.print(aireacionActive ? "ON" : "OFF");
+    dataFile.print(";");
+    dataFile.print(co2Active ? "ON" : "OFF");
+    dataFile.print(";");
+    
+    // Intensidad de LEDs (en porcentaje)
+    dataFile.print(pwmValues[0] * 5); // Blanco
+    dataFile.print(";");
+    dataFile.print(pwmValues[1] * 5); // Rojo
+    dataFile.print(";");
+    dataFile.print(pwmValues[2] * 5); // Verde
+    dataFile.print(";");
+    dataFile.print(pwmValues[3] * 5); // Azul
+    dataFile.print(";");
+    
+    // Información de secuencia
+    dataFile.print(sequenceRunning ? "SI" : "NO");
+    dataFile.print(";");
+    
+    if (sequenceRunning) {
+      dataFile.print(selectedSequence + 1);
+      dataFile.print(";");
+      dataFile.print(currentSequenceStep + 1);
+      dataFile.print(";");
+      dataFile.print(sequences[selectedSequence].stepCount);
+      dataFile.print(";");
+      
+      // Calcular tiempo transcurrido en el paso actual
+      DateTime now = rtc.now();
+      TimeSpan elapsed = now - stepStartTime;
+      int elapsedSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
+                          elapsed.minutes() * 60 + elapsed.seconds();
+      dataFile.print(elapsedSeconds);
+      dataFile.print(";");
+      dataFile.print(sequenceLoopMode ? "SI" : "NO");
+    } else {
+      dataFile.print("0;0;0;0;NO");
+    }
+    
+    dataFile.println(); // Nueva línea al final
     dataFile.close();
+    
+    Serial.print("Datos guardados en: ");
+    Serial.println(filename);
+  } else {
+    Serial.println("Error al abrir archivo de datos");
   }
 }
 
