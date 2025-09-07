@@ -143,7 +143,7 @@ int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
 // Variables para almacenamiento de datos
 bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
 unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
-unsigned long logInterval = 300000; // 5 minutos en milisegundos (configurable)
+unsigned long logInterval = 5000; // 5 minutos en milisegundos (configurable)
 int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
 
 // Direcciones EEPROM para configuración de logging
@@ -296,7 +296,7 @@ void setup() {
   
   EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
   if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
-    logInterval = 300000; // 5 minutos por defecto
+    logInterval = 5000; // 5 minutos por defecto
   }
 
   // Verificar y reanudar logging si estaba activo
@@ -4325,8 +4325,8 @@ void displayAlmacenarConfirmStart() {
   
   lcd.setCursor(0, 2);
   lcd.print("Intervalo: ");
-  lcd.print(logInterval / 60000);
-  lcd.print(" min");
+  lcd.print(logInterval / 1000);
+  lcd.print(" seg");
   
   lcd.setCursor(0, 3);
   lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
