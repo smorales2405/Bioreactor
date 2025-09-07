@@ -1,0 +1,661 @@
+:root {
+    --primary-color: #2563eb;
+    --secondary-color: #64748b;
+    --success-color: #10b981;
+    --danger-color: #ef4444;
+    --warning-color: #f59e0b;
+    --background: #0f172a;
+    --surface: #1e293b;
+    --surface-light: #334155;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-color: #475569;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: var(--background);
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Header */
+header {
+    background: var(--surface);
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+h1 {
+    font-size: 28px;
+    background: linear-gradient(135deg, var(--primary-color), #06b6d4);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--danger-color);
+    animation: pulse 2s infinite;
+}
+
+.status-indicator.connected {
+    background: var(--success-color);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Navigation */
+.main-nav {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.nav-btn {
+    flex: 1;
+    padding: 15px;
+    background: var(--surface);
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.nav-btn:hover {
+    background: var(--surface-light);
+    transform: translateY(-2px);
+}
+
+.nav-btn.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.nav-btn svg {
+    width: 24px;
+    height: 24px;
+}
+
+/* Sections */
+.section {
+    display: none;
+}
+
+.section.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Sensor Cards */
+.sensors-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.sensor-card {
+    background: var(--surface);
+    padding: 25px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+}
+
+.sensor-card h3 {
+    margin-bottom: 15px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.sensor-value {
+    font-size: 48px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.sensor-value .unit {
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+
+/* Gauges */
+.gauge-container {
+    position: relative;
+    height: 40px;
+}
+
+.gauge {
+    width: 100%;
+    height: 20px;
+    background: var(--surface-light);
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+}
+
+.gauge-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #06b6d4);
+    border-radius: 10px;
+    transition: width 0.5s ease;
+    width: 0%;
+}
+
+.gauge-label {
+    text-align: center;
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* pH Indicator */
+.ph-indicator {
+    margin-top: 20px;
+}
+
+.ph-scale {
+    height: 30px;
+    background: linear-gradient(90deg, 
+        #ef4444 0%, 
+        #f59e0b 35%, 
+        #10b981 50%, 
+        #3b82f6 65%, 
+        #8b5cf6 100%);
+    border-radius: 15px;
+    position: relative;
+    margin-bottom: 10px;
+}
+
+.ph-marker {
+    position: absolute;
+    top: -5px;
+    width: 4px;
+    height: 40px;
+    background: white;
+    border-radius: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    transition: left 0.5s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.ph-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+}
+
+.ph-labels .acid { color: #ef4444; }
+.ph-labels .neutral { color: #10b981; }
+.ph-labels .base { color: #8b5cf6; }
+
+/* Charts */
+.charts-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 20px;
+}
+
+.chart-card {
+    background: var(--surface);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+
+.chart-card h3 {
+    margin-bottom: 15px;
+    color: var(--text-secondary);
+}
+
+/* LED Controls */
+.led-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 30px;
+    background: var(--surface);
+    padding: 5px;
+    border-radius: 10px;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+.tab-btn.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+.led-content {
+    display: none;
+}
+
+.led-content.active {
+    display: block;
+}
+
+.master-controls {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.led-controls-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.led-control-card {
+    background: var(--surface);
+    padding: 25px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    text-align: center;
+}
+
+.led-control-card h3 {
+    margin-bottom: 20px;
+    color: var(--text-primary);
+}
+
+/* LED Indicators */
+.led-indicator {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    margin: 0 auto 20px;
+    transition: all 0.3s ease;
+    box-shadow: 0 0 0 rgba(255, 255, 255, 0);
+}
+
+.led-indicator.white {
+    background: radial-gradient(circle, #ffffff, #e5e5e5);
+}
+
+.led-indicator.red {
+    background: radial-gradient(circle, #ff6b6b, #dc2626);
+}
+
+.led-indicator.green {
+    background: radial-gradient(circle, #51cf66, #16a34a);
+}
+
+.led-indicator.blue {
+    background: radial-gradient(circle, #339af0, #2563eb);
+}
+
+.led-indicator.active {
+    box-shadow: 0 0 30px currentColor;
+}
+
+.intensity-display {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 15px;
+}
+
+/* Sliders */
+.slider {
+    width: 100%;
+    height: 8px;
+    border-radius: 5px;
+    background: var(--surface-light);
+    outline: none;
+    margin: 20px 0;
+    -webkit-appearance: none;
+}
+
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    cursor: pointer;
+}
+
+.slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    cursor: pointer;
+}
+
+.led-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+/* Buttons */
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+    flex: 1;
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #1d4ed8;
+}
+
+.btn-secondary {
+    background: var(--secondary-color);
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: #475569;
+}
+
+.btn-on {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-on:hover {
+    background: #059669;
+}
+
+.btn-off {
+    background: var(--danger-color);
+    color: white;
+}
+
+.btn-off:hover {
+    background: #dc2626;
+}
+
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+}
+
+/* Sequences */
+.sequence-status {
+    background: var(--surface);
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.sequences-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.sequence-card {
+    background: var(--surface);
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.sequence-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--primary-color);
+}
+
+.sequence-card h4 {
+    margin-bottom: 10px;
+}
+
+.sequence-card.configured {
+    border-color: var(--success-color);
+}
+
+.sequence-card .status {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 15px;
+}
+
+.sequence-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sequence-actions button {
+    padding: 8px;
+    font-size: 12px;
+}
+
+/* Modal */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.modal-content {
+    background: var(--surface);
+    margin: 5% auto;
+    padding: 30px;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.close {
+    color: var(--text-secondary);
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: var(--text-primary);
+}
+
+.seq-config label {
+    display: block;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    color: var(--text-secondary);
+}
+
+.seq-config input[type="number"] {
+    width: 100px;
+    padding: 8px;
+    background: var(--surface-light);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    color: var(--text-primary);
+}
+
+.step-config {
+    background: var(--surface-light);
+    padding: 20px;
+    border-radius: 10px;
+    margin-top: 20px;
+}
+
+.step-config h4 {
+    margin-bottom: 15px;
+    color: var(--primary-color);
+}
+
+.color-controls {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.color-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.color-control label {
+    margin: 0;
+    width: 60px;
+}
+
+.color-control input[type="range"] {
+    flex: 1;
+}
+
+.color-control span {
+    width: 40px;
+    text-align: right;
+}
+
+.time-controls {
+    display: flex;
+    gap: 15px;
+}
+
+.time-control {
+    flex: 1;
+}
+
+.time-control input {
+    width: 100%;
+    padding: 8px;
+    background: var(--background);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    color: var(--text-primary);
+}
+
+.modal-buttons {
+    margin-top: 30px;
+    display: flex;
+    gap: 15px;
+    justify-content: flex-end;
+}
+
+.execution-mode {
+    margin: 20px 0;
+    padding: 15px;
+    background: var(--surface-light);
+    border-radius: 8px;
+}
+
+.execution-mode label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+    
+    header {
+        flex-direction: column;
+        text-align: center;
+        gap: 15px;
+    }
+    
+    h1 {
+        font-size: 24px;
+    }
+    
+    .sensors-grid,
+    .led-controls-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .charts-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .master-controls {
+        flex-direction: column;
+    }
+    
+    .color-controls {
+        grid-template-columns: 1fr;
+    }
+}

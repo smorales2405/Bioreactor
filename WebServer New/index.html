@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biorreactor - Sistema de Control</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sistema de Control - Biorreactor</h1>
+            <div class="connection-status">
+                <span class="status-indicator" id="status"></span>
+                <span>Estado: <span id="statusText">Conectando...</span></span>
+            </div>
+        </header>
+
+        <nav class="main-nav">
+            <button class="nav-btn active" onclick="showSection('sensors')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                </svg>
+                Sensores
+            </button>
+            <button class="nav-btn" onclick="showSection('leds')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                Control LED
+            </button>
+        </nav>
+
+        <!-- Sección Sensores -->
+        <section id="sensors" class="section active">
+            <h2>Monitoreo de Sensores</h2>
+            
+            <div class="sensors-grid">
+                <!-- Temperatura -->
+                <div class="sensor-card">
+                    <h3>Temperatura</h3>
+                    <div class="sensor-value">
+                        <span id="tempValue">--</span>
+                        <span class="unit">°C</span>
+                    </div>
+                    <div class="gauge-container">
+                        <div class="gauge" id="tempGauge">
+                            <div class="gauge-fill"></div>
+                            <div class="gauge-label">0°C - 50°C</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- pH -->
+                <div class="sensor-card">
+                    <h3>pH</h3>
+                    <div class="sensor-value">
+                        <span id="phValue">--</span>
+                    </div>
+                    <div class="ph-indicator" id="phIndicator">
+                        <div class="ph-scale">
+                            <div class="ph-marker" id="phMarker"></div>
+                        </div>
+                        <div class="ph-labels">
+                            <span class="acid">Ácido</span>
+                            <span class="neutral">Neutro</span>
+                            <span class="base">Base</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Concentración -->
+                <div class="sensor-card">
+                    <h3>Concentración</h3>
+                    <div class="sensor-value">
+                        <span id="concValue">--</span>
+                        <span class="unit">MC/mL</span>
+                    </div>
+                    <div class="gauge-container">
+                        <div class="gauge" id="concGauge">
+                            <div class="gauge-fill"></div>
+                            <div class="gauge-label">0 - 40 MC/mL</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gráficos históricos -->
+            <div class="charts-container">
+                <div class="chart-card">
+                    <h3>Histórico de Temperatura</h3>
+                    <canvas id="tempChart"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3>Histórico de pH</h3>
+                    <canvas id="phChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Sección Control LED -->
+        <section id="leds" class="section">
+            <h2>Control de Iluminación LED</h2>
+            
+            <div class="led-tabs">
+                <button class="tab-btn active" onclick="showLedTab('manual')">Control Manual</button>
+                <button class="tab-btn" onclick="showLedTab('sequences')">Secuencias</button>
+            </div>
+
+            <!-- Control Manual -->
+            <div id="manual" class="led-content active">
+                <div class="master-controls">
+                    <button class="btn btn-primary" onclick="allLedsOn()">Encender Todos</button>
+                    <button class="btn btn-secondary" onclick="allLedsOff()">Apagar Todos</button>
+                </div>
+
+                <div class="led-controls-grid">
+                    <!-- LED Blanco -->
+                    <div class="led-control-card">
+                        <h3>Blanco</h3>
+                        <div class="led-indicator white" id="whiteLed"></div>
+                        <div class="intensity-display">
+                            <span id="whiteIntensity">0</span>%
+                        </div>
+                        <input type="range" class="slider" id="whiteSlider" min="0" max="100" value="0" 
+                               oninput="updateLed('white', this.value)">
+                        <div class="led-buttons">
+                            <button class="btn btn-on" onclick="setLed('white', 100)">ON</button>
+                            <button class="btn btn-off" onclick="setLed('white', 0)">OFF</button>
+                        </div>
+                    </div>
+
+                    <!-- LED Rojo -->
+                    <div class="led-control-card">
+                        <h3>Rojo</h3>
+                        <div class="led-indicator red" id="redLed"></div>
+                        <div class="intensity-display">
+                            <span id="redIntensity">0</span>%
+                        </div>
+                        <input type="range" class="slider" id="redSlider" min="0" max="100" value="0"
+                               oninput="updateLed('red', this.value)">
+                        <div class="led-buttons">
+                            <button class="btn btn-on" onclick="setLed('red', 100)">ON</button>
+                            <button class="btn btn-off" onclick="setLed('red', 0)">OFF</button>
+                        </div>
+                    </div>
+
+                    <!-- LED Verde -->
+                    <div class="led-control-card">
+                        <h3>Verde</h3>
+                        <div class="led-indicator green" id="greenLed"></div>
+                        <div class="intensity-display">
+                            <span id="greenIntensity">0</span>%
+                        </div>
+                        <input type="range" class="slider" id="greenSlider" min="0" max="100" value="0"
+                               oninput="updateLed('green', this.value)">
+                        <div class="led-buttons">
+                            <button class="btn btn-on" onclick="setLed('green', 100)">ON</button>
+                            <button class="btn btn-off" onclick="setLed('green', 0)">OFF</button>
+                        </div>
+                    </div>
+
+                    <!-- LED Azul -->
+                    <div class="led-control-card">
+                        <h3>Azul</h3>
+                        <div class="led-indicator blue" id="blueLed"></div>
+                        <div class="intensity-display">
+                            <span id="blueIntensity">0</span>%
+                        </div>
+                        <input type="range" class="slider" id="blueSlider" min="0" max="100" value="0"
+                               oninput="updateLed('blue', this.value)">
+                        <div class="led-buttons">
+                            <button class="btn btn-on" onclick="setLed('blue', 100)">ON</button>
+                            <button class="btn btn-off" onclick="setLed('blue', 0)">OFF</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Secuencias -->
+            <div id="sequences" class="led-content">
+                <div class="sequence-status" id="sequenceStatus">
+                    <p>Estado: <span id="seqStatusText">Inactivo</span></p>
+                    <button class="btn btn-danger" id="stopSeqBtn" onclick="stopSequence()" style="display:none;">
+                        Detener Secuencia
+                    </button>
+                </div>
+
+                <div class="sequences-grid" id="sequencesList">
+                    <!-- Las secuencias se cargarán dinámicamente -->
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Modal para configurar secuencia -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h2>Configurar Secuencia <span id="seqNumber"></span></h2>
+            
+            <div class="seq-config">
+                <label>Número de pasos:</label>
+                <input type="number" id="stepCount" min="1" max="10" value="1" onchange="updateStepsConfig()">
+                
+                <div id="stepsContainer">
+                    <!-- Los pasos se generarán dinámicamente -->
+                </div>
+                
+                <div class="modal-buttons">
+                    <button class="btn btn-primary" onclick="saveSequence()">Guardar</button>
+                    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
