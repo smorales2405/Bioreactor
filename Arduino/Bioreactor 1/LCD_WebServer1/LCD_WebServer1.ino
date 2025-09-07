@@ -288,7 +288,6 @@ void setup() {
   EEPROM.begin(512);
   loadTurbidityCalibration();
   loadPhCalibration(); 
-  loadSystemState();
 
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
@@ -437,6 +436,8 @@ void setup() {
   
   delay(1000);
   
+  loadSystemState();
+
   // Conectar WiFi
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -4399,13 +4400,15 @@ void stopDataLogging(int type) {
 }
 
 void deleteDataLog(int type) {
-  String filename = "/tipo" + String(type + 1) + ".json";
+  String filename = "/datos_tipo" + String(type + 1) + ".txt";
   
   if (SD.exists(filename)) {
     SD.remove(filename);
     lcd.clear();
     lcd.setCursor(0, 1);
     lcd.print("Datos borrados");
+    Serial.print("Archivo eliminado: ");
+    Serial.println(filename);
   } else {
     lcd.clear();
     lcd.setCursor(0, 1);
@@ -4415,39 +4418,113 @@ void deleteDataLog(int type) {
 }
 
 void saveDataToSD(int type) {
-  String filename = "/tipo" + String(type + 1) + ".json";
+  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  
+  // Verificar si el archivo existe, si no, crear con encabezados
+  bool fileExists = SD.exists(filename);
+  
   File dataFile = SD.open(filename, FILE_APPEND);
   
   if (dataFile) {
-    // Crear objeto JSON
-    StaticJsonDocument<512> doc;
+    // Si es un archivo nuevo, agregar encabezados
+    if (!fileExists) {
+      dataFile.println("Fecha;Hora;Tipo;Temperatura_C;Turbidez_MCmL;pH;Volumen_L;Aireacion;CO2;LED_Blanco;LED_Rojo;LED_Verde;LED_Azul;Secuencia_Activa;Secuencia_ID;Paso_Actual;Total_Pasos;Tiempo_Paso_seg;Modo_Bucle");
+    }
     
     // Obtener fecha y hora
     DateTime now = rtc.now();
-    char dateTime[20];
-    sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", 
-            now.year(), now.month(), now.day(),
-            now.hour(), now.minute(), now.second());
     
-    doc["timestamp"] = dateTime;
-    doc["tipo"] = type + 1;
-    doc["temperatura"] = temperature;
-    doc["turbidez"] = getTurbidityConcentration();
-    doc["pH"] = phValue;
-    doc["aireacion"] = aireacionActive ? "ON" : "OFF";
-    doc["CO2"] = co2Active ? "ON" : "OFF";
+    // Escribir fecha
+    dataFile.print(now.year());
+    dataFile.print("/");
+    if (now.month() < 10) dataFile.print("0");
+    dataFile.print(now.month());
+    dataFile.print("/");
+    if (now.day() < 10) dataFile.print("0");
+    dataFile.print(now.day());
+    dataFile.print(";");
     
-    // LEDs status
-    JsonObject leds = doc.createNestedObject("leds");
-    leds["blanco"] = map(pwmValues[0], 0, 100, 0, 255);
-    leds["rojo"] = map(pwmValues[1], 0, 100, 0, 255);
-    leds["verde"] = map(pwmValues[2], 0, 100, 0, 255);
-    leds["azul"] = map(pwmValues[3], 0, 100, 0, 255);
+    // Escribir hora
+    if (now.hour() < 10) dataFile.print("0");
+    dataFile.print(now.hour());
+    dataFile.print(":");
+    if (now.minute() < 10) dataFile.print("0");
+    dataFile.print(now.minute());
+    dataFile.print(":");
+    if (now.second() < 10) dataFile.print("0");
+    dataFile.print(now.second());
+    dataFile.print(";");
     
-    // Escribir JSON al archivo
-    serializeJson(doc, dataFile);
-    dataFile.println(","); // Separador para múltiples objetos JSON
+    // Tipo de experimento
+    dataFile.print(type + 1);
+    dataFile.print(";");
+    
+    // Sensores
+    dataFile.print(temperature, 2);
+    dataFile.print(";");
+    
+    float turbidityValue = getTurbidityConcentration();
+    if (turbidityValue >= 0) {
+      dataFile.print(turbidityValue, 2);
+    } else {
+      dataFile.print("N/A");
+    }
+    dataFile.print(";");
+    
+    dataFile.print(phValue, 2);
+    dataFile.print(";");
+    
+    // Volumen total
+    dataFile.print(volumeTotal, 2);
+    dataFile.print(";");
+    
+    // Estados de aireación y CO2
+    dataFile.print(aireacionActive ? "ON" : "OFF");
+    dataFile.print(";");
+    dataFile.print(co2Active ? "ON" : "OFF");
+    dataFile.print(";");
+    
+    // Intensidad de LEDs (en porcentaje)
+    dataFile.print(pwmValues[0] * 5); // Blanco
+    dataFile.print(";");
+    dataFile.print(pwmValues[1] * 5); // Rojo
+    dataFile.print(";");
+    dataFile.print(pwmValues[2] * 5); // Verde
+    dataFile.print(";");
+    dataFile.print(pwmValues[3] * 5); // Azul
+    dataFile.print(";");
+    
+    // Información de secuencia
+    dataFile.print(sequenceRunning ? "SI" : "NO");
+    dataFile.print(";");
+    
+    if (sequenceRunning) {
+      dataFile.print(selectedSequence + 1);
+      dataFile.print(";");
+      dataFile.print(currentSequenceStep + 1);
+      dataFile.print(";");
+      dataFile.print(sequences[selectedSequence].stepCount);
+      dataFile.print(";");
+      
+      // Calcular tiempo transcurrido en el paso actual
+      DateTime now = rtc.now();
+      TimeSpan elapsed = now - stepStartTime;
+      int elapsedSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
+                          elapsed.minutes() * 60 + elapsed.seconds();
+      dataFile.print(elapsedSeconds);
+      dataFile.print(";");
+      dataFile.print(sequenceLoopMode ? "SI" : "NO");
+    } else {
+      dataFile.print("0;0;0;0;NO");
+    }
+    
+    dataFile.println(); // Nueva línea al final
     dataFile.close();
+    
+    Serial.print("Datos guardados en: ");
+    Serial.println(filename);
+  } else {
+    Serial.println("Error al abrir archivo de datos");
   }
 }
 
