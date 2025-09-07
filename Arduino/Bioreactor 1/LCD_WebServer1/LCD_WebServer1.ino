@@ -1843,8 +1843,7 @@ void handleSelection() {
       
     case MENU_SEQ_CONFIG_COLOR:
       if (currentColorConfig < 4) {
-        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = (menuCursor + 1) / 2;
-        
+        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = menuCursor*5;        
         currentColorConfig++;
         if (currentColorConfig < 4) {
           menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig];
