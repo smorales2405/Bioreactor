@@ -531,7 +531,7 @@
 
         // Control de LEDs
         function toggleLED(color, action) {
-            fetch(`/led/${color}/${action}`)
+            fetch('/led/${color}/${action}')
                 .then(response => response.text())
                 .then(data => {
                     updateLEDStatus(color, action === 'on');
@@ -554,7 +554,7 @@
             }
             
             updateTimer = setTimeout(() => {
-                fetch(`/led/${color}/pwm/${value}`)
+                fetch('/led/${color}/pwm/${value}')
                     .then(response => response.text())
                     .then(data => {
                         console.log(`LED ${color} set to ${value}%`);
@@ -635,7 +635,7 @@
             document.getElementById('sequence-editor').style.display = 'block';
 
             // Cargar datos si existe
-            fetch(`/api/sequence/${id}`)
+            fetch('/api/sequence/${id}')
                 .then(response => response.json())
                 .then(data => {
                     if (data.configured) {
@@ -756,7 +756,7 @@
         }
 
         function startSequence(id) {
-            fetch(`/api/sequence/${id}/start`, {
+            fetch('/api/sequence/${id}/start', {
                 method: 'POST'
             })
             .then(response => response.text())
@@ -806,7 +806,7 @@
 
         // Control de Aireación
         function controlAireacion(tipo, action) {
-            fetch(`/api/${tipo}/${action}`)
+            fetch('/api/${tipo}/${action}')
                 .then(response => response.text())
                 .then(data => {
                     updateAireacionStatus();

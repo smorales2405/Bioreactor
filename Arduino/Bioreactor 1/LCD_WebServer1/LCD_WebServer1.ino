@@ -187,6 +187,7 @@ enum MenuState {
   MENU_SEQ_DELETE_ALL_CONFIRM,  
   MENU_SEQ_CONFIRM_SAVE,
   MENU_SEQ_RUNNING,
+  MENU_SEQ_RUNNING_OPTIONS,
   MENU_SEQ_STOP_CONFIRM,
   MENU_SEQ_EXIT_CONFIG_CONFIRM,
   MENU_LLENADO,
@@ -1249,6 +1250,10 @@ void incrementCursor() {
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
 
+    case MENU_SEQ_RUNNING_OPTIONS:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_CO2:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // 3 opciones
@@ -1408,6 +1413,10 @@ void decrementCursor() {
     case MENU_SEQ_CONFIRM_SAVE:
     case MENU_SEQ_STOP_CONFIRM:
     case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
+    case MENU_SEQ_RUNNING_OPTIONS:
       menuCursor = (menuCursor == 0) ? 1 : 0;
       break;
 
@@ -1741,6 +1750,7 @@ void handleSelection() {
       menuCursor = 1;
       break;
 
+    // Modificar en handleSelection(), caso MENU_ACTION:
     case MENU_ACTION:
       if (menuCursor == 0) {
         // On/Off
@@ -1753,9 +1763,14 @@ void handleSelection() {
         currentMenu = MENU_LED_SELECT;
         menuCursor = 0;
       } else if (menuCursor == 2) {
-        // Secuencias
-        currentMenu = MENU_SEQ_LIST;
-        menuCursor = 0;
+        // Secuencias - verificar si hay una activa
+        if (sequenceRunning) {
+          // Si hay secuencia activa, ir directamente a mostrarla
+          currentMenu = MENU_SEQ_RUNNING;
+        } else {
+          currentMenu = MENU_SEQ_LIST;
+          menuCursor = 0;
+        }
       } else {
         // Atrás
         currentMenu = MENU_MAIN;
@@ -1934,10 +1949,23 @@ void handleSelection() {
       break;
       
     case MENU_SEQ_RUNNING:
-      currentMenu = MENU_SEQ_STOP_CONFIRM;
-      menuCursor = 1;
+      currentMenu = MENU_SEQ_RUNNING_OPTIONS;
+      menuCursor = 0;
       break;
-      
+
+    case MENU_SEQ_RUNNING_OPTIONS:
+      if (menuCursor == 0) {
+        // Detener Secuencia
+        currentMenu = MENU_SEQ_STOP_CONFIRM;
+        menuCursor = 1;
+      } else {
+        // Ir al Menú Principal sin detener la secuencia
+        currentMenu = MENU_MAIN;
+        menuCursor = 1;  // Cursor en "LEDs"
+        // La secuencia continúa ejecutándose en segundo plano
+      }
+      break;
+
     case MENU_SEQ_STOP_CONFIRM:
       if (menuCursor == 0) {
         stopSequence();
@@ -2349,6 +2377,9 @@ void updateDisplay() {
     case MENU_SEQ_EXIT_CONFIG_CONFIRM:
       displaySeqExitConfirm();
       break;
+    case MENU_SEQ_RUNNING_OPTIONS:
+      displaySeqRunningOptions();
+      break;
     case MENU_LLENADO:
       displayLlenadoMenu();
       break;
@@ -2408,6 +2439,11 @@ void displayMainMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SISTEMA PRINCIPAL:");
   
+  if (sequenceRunning) {
+    lcd.setCursor(15, 0);
+    lcd.print("[SEQ]");
+  }
+
   // Con 6 opciones, necesitamos scroll
   int startIndex = 0;
   if (menuCursor > 2) {
@@ -2451,6 +2487,12 @@ void displayActionMenu() {
   lcd.setCursor(0, 0);
   lcd.print("CONTROL LEDs:");
   
+  // Indicador de secuencia activa
+  if (sequenceRunning) {
+    lcd.setCursor(14, 0);
+    lcd.print("[ACT]");
+  }
+
   int startIndex = 0;
   if (menuCursor > 2) startIndex = 1;
   
@@ -2467,6 +2509,9 @@ void displayActionMenu() {
     } else if (optionIndex == 2) {
       lcd.print(menuCursor == 2 ? "> " : "  ");
       lcd.print("Secuencias");
+      if (sequenceRunning) {
+      lcd.print(" *");  // Indicador de que hay una activa
+      }
     } else if (optionIndex == 3) {
       lcd.print(menuCursor == 3 ? "> " : "  ");
       lcd.print("Atras");
@@ -3244,6 +3289,29 @@ void loadAllSequences() {
   for (int i = 0; i < 10; i++) {
     loadSequence(i);
   }
+}
+
+void displaySeqRunningOptions() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("SECUENCIA ACTIVA");
+  
+  // Mostrar info de la secuencia actual
+  lcd.setCursor(0, 1);
+  lcd.print("Seq");
+  lcd.print(selectedSequence + 1);
+  lcd.print(" Paso:");
+  lcd.print(currentSequenceStep + 1);
+  lcd.print("/");
+  lcd.print(sequences[selectedSequence].stepCount);
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Detener Secuencia");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Menu Principal");
 }
 
 void startFilling() {
