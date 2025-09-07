@@ -1,3 +1,7 @@
+// Configuración del servidor
+const ESP32_IP = '192.168.4.1'; // IP del ESP32 en modo AP
+const SERVER_URL = `http://${ESP32_IP}`;
+
 // Estado de la aplicación
 let sensorData = {
     temperature: [],
@@ -164,7 +168,7 @@ function initCharts() {
 // Actualización de datos de sensores
 async function updateSensorData() {
    try {
-       const response = await fetch('/api/sensors');
+       const response = await fetch('${SERVER_URL}/api/sensors');
        const data = await response.json();
        
        // Actualizar valores en pantalla
@@ -247,7 +251,7 @@ async function updateLed(color, value) {
    };
    
    try {
-       await fetch(`/led/${colorMap[color]}/pwm/${value}`);
+       await fetch(`${SERVER_URL}/led/${colorMap[color]}/pwm/${value}`);
        
        // Actualizar UI
        document.getElementById(`${color}Intensity`).textContent = value;
@@ -289,7 +293,7 @@ async function allLedsOff() {
 // Actualizar estado de LEDs
 async function updateLedStatus() {
    try {
-       const response = await fetch('/status');
+       const response = await fetch('${SERVER_URL}/status');
        const data = await response.json();
        
        // Actualizar sliders e indicadores
@@ -322,7 +326,7 @@ async function updateLedStatus() {
 // Manejo de secuencias
 async function loadSequences() {
    try {
-       const response = await fetch('/api/sequences');
+       const response = await fetch('${SERVER_URL}/api/sequences');
        sequences = await response.json();
        
        const container = document.getElementById('sequencesList');
@@ -356,7 +360,7 @@ async function loadSequences() {
 
 async function updateSequenceStatus() {
    try {
-       const response = await fetch('/api/sequence/status');
+       const response = await fetch('${SERVER_URL}/api/sequence/status');
        const data = await response.json();
        
        const statusText = document.getElementById('seqStatusText');
@@ -408,7 +412,7 @@ function startSequenceModal(id) {
 async function executeSequence(id, mode) {
    try {
        // Implementar modo bucle si es necesario
-       await fetch(`/api/sequence/${id}/start`, { method: 'POST' });
+       await fetch(`${SERVER_URL}/api/sequence/${id}/start`, { method: 'POST' });
        loadSequences();
    } catch (error) {
        console.error('Error ejecutando secuencia:', error);
@@ -417,7 +421,7 @@ async function executeSequence(id, mode) {
 
 async function stopSequence() {
    try {
-       await fetch('/api/sequence/stop', { method: 'POST' });
+       await fetch('${SERVER_URL}/api/sequence/stop', { method: 'POST' });
        loadSequences();
    } catch (error) {
        console.error('Error deteniendo secuencia:', error);
@@ -513,7 +517,7 @@ async function saveSequence() {
    };
    
    try {
-       await fetch('/api/sequence/save', {
+       await fetch('${SERVER_URL}/api/sequence/save', {
            method: 'POST',
            headers: {
                'Content-Type': 'application/json'
@@ -532,7 +536,7 @@ async function deleteSequence(id) {
    if (confirm(`¿Estás seguro de borrar la Secuencia ${id + 1}?`)) {
        try {
            // Aquí deberías implementar el endpoint de borrado en el servidor
-           await fetch(`/api/sequence/${id}/delete`, { method: 'DELETE' });
+           await fetch(`${SERVER_URL}/api/sequence/${id}/delete`, { method: 'DELETE' });
            loadSequences();
        } catch (error) {
            console.error('Error borrando secuencia:', error);

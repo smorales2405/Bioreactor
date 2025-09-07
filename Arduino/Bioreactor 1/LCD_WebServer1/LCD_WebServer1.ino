@@ -1022,53 +1022,7 @@ void handleButtons() {
   if (pcfInput.digitalRead(P1) == 0) {
     if (millis() - lastExtraButtonPress > debounceDelay) {
       lastExtraButtonPress = millis();
-      //handleExtraButton();
     }
-  }
-}
-
-void handleExtraButton() {
-  switch (currentMenu) {
-    case MENU_SEQ_CONFIG_CANTIDAD:
-    case MENU_SEQ_CONFIG_COLOR:
-    case MENU_SEQ_CONFIG_TIME:
-    case MENU_SEQ_CONFIG_TIME_CONFIRM:  // Agregar este nuevo caso
-      currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_RUNNING:
-      currentMenu = MENU_SEQ_STOP_CONFIRM;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_PH_PANEL:
-      currentMenu = MENU_SENSOR_PH;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_SET_LIMIT:
-      phControlActive = false; // Desactivar control si se cancela
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2:
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2_ACTIVE:
-      stopCO2Injection();
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
-      break;
   }
 }
 
