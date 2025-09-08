@@ -9,7 +9,6 @@
 #include <ArduinoJson.h>
 #include <Adafruit_MAX31865.h>
 #include <Adafruit_ADS1X15.h>
-#include <DFRobot_ESP_PH_WITH_ADC.h>
 #include <EEPROM.h>
 #include <PCF8574.h>
 
@@ -26,7 +25,6 @@ RTC_DS3231 rtc;
 // === Sensores ===
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
 Adafruit_ADS1115 ads;
-DFRobot_ESP_PH_WITH_ADC phSensor;
 
 #define RREF      430.0
 #define RNOMINAL  100.0
@@ -143,7 +141,7 @@ int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
 // Variables para almacenamiento de datos
 bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
 unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
-unsigned long logInterval = 5000; // 5 minutos en milisegundos (configurable)
+unsigned long logInterval = 5000; // 5 segundos en milisegundos (configurable)
 int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
 
 // Direcciones EEPROM para configuración de logging
@@ -343,7 +341,7 @@ void setup() {
 
   // Configurar PCF8574
   pcfInput.pinMode(P0, INPUT);
-  pcfInput.pinMode(P1, INPUT);
+  pcfInput.pinMode(P1, INPUT_PULLUP);
   pcfInput.begin();
 
   pcfOutput.pinMode(P1, OUTPUT);  // Bomba de Agua
@@ -387,9 +385,6 @@ void setup() {
   
   // MAX31865
   thermo.begin(MAX31865_3WIRE);
-  
-  // pH Sensor
-  phSensor.begin();
   
   // ADS1115
   ads.setGain(GAIN_TWOTHIRDS);
@@ -1023,11 +1018,16 @@ void handleButtons() {
   }
   
   // Pulsador adicional
-  if (pcfInput.digitalRead(P1) == 0) {
-    if (millis() - lastExtraButtonPress > debounceDelay) {
-      lastExtraButtonPress = millis();
-    }
+  if (pcfInput.digitalRead(P1,true) == 0) {
+    //if (millis() - lastExtraButtonPress > debounceDelay) {
+    //  lastExtraButtonPress = millis();
+    //}
+    handleExtraButton();
   }
+}
+
+void handleExtraButton () {
+  return;
 }
 
 void incrementCursor() {

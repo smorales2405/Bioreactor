@@ -206,7 +206,7 @@ async function updateSensorData() {
        sensorData.ph.push(data.ph);
        
        // Limitar datos a últimos 20 puntos
-       if (sensorData.timestamps.length > 20) {
+       if (sensorData.timestamps.length > 50) {
            sensorData.timestamps.shift();
            sensorData.temperature.shift();
            sensorData.ph.shift();
