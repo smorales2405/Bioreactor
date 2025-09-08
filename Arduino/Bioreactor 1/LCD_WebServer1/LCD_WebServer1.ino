@@ -1756,13 +1756,13 @@ void handleSelection() {
     case MENU_ONOFF:
       if (menuCursor == 0) {
         // ON - Cambiar estas líneas
-        //ledStates[selectedLed] = true;
-        //pwmValues[selectedLed] = 10;  // AGREGAR ESTA LÍNEA
+        ledStates[selectedLed] = true;
+        pwmValues[selectedLed] = 20;  // AGREGAR ESTA LÍNEA
         ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
       } else {
         // OFF
-        //ledStates[selectedLed] = false;
-        //pwmValues[selectedLed] = 0;
+        ledStates[selectedLed] = false;
+        pwmValues[selectedLed] = 0;
         ledcWrite(ledPins[selectedLed], 0);
       }
       currentMenu = MENU_ACTION;
@@ -3038,7 +3038,7 @@ void updateColorPreview() {
     if (i == currentColorConfig) {
       intensity = menuCursor*5;
     } else {
-      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]*10;
+      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i];
     }
     
     int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -3107,10 +3107,10 @@ void stopSequence() {
 void applySequenceStep(int step) {
   for (int i = 0; i < 4; i++) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
-    int pwmValue = map(intensity, 0, 10, 0, 255);
+    int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
     ledStates[i] = intensity > 0;
-    pwmValues[i] = intensity;
+    pwmValues[i] = intensity/5;
     
     if (intensity > 0) {
       Serial.print(ledNames[i]);
@@ -3143,6 +3143,7 @@ void checkSequenceProgress() {
     
     if (currentSequenceStep >= sequences[selectedSequence].stepCount) {
       if (sequenceLoopMode) {
+        delay(50);
         // Reiniciar secuencia
         currentSequenceStep = 0;
         stepStartTime = now;
