@@ -121,6 +121,10 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_AIREACION 312         // 1 byte - estado aireación
 #define EEPROM_CO2 313               // 1 byte - estado CO2
 
+// Agregar direcciones EEPROM para límites de temperatura
+#define EEPROM_TEMP_MIN 170  // Float (4 bytes)
+#define EEPROM_TEMP_MAX 174  // Float (4 bytes)
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -144,13 +148,23 @@ unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para c
 unsigned long logInterval = 5000; // 5 segundos en milisegundos (configurable)
 int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
 
+// Variables para límites de temperatura
+float tempLimitMin = 18.0;  // Valor por defecto
+float tempLimitMax = 28.0;  // Valor por defecto
+float tempEditValue = 0.0;  // Valor temporal para edición
+bool editingMin = true;      // Flag para saber qué límite se está editando
+
 // Direcciones EEPROM para configuración de logging
 #define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
 
 // === Estados del menú ===
 enum MenuState {
   MENU_MAIN,           
-  MENU_SENSORS,        
+  MENU_SENSORS,
+  MENU_TEMP_LIMITS,
+  MENU_TEMP_SET_MIN,
+  MENU_TEMP_SET_MAX,
+  MENU_TEMP_CONFIRM_SAVE,        
   MENU_SENSOR_PH,      
   MENU_PH_CALIBRATION_MENU,
   MENU_PH_SET_MUESTRA,
@@ -284,6 +298,7 @@ void setup() {
   
   // Inicializar EEPROM
   EEPROM.begin(512);
+  loadTemperatureLimits();
   loadTurbidityCalibration();
   loadPhCalibration(); 
 
@@ -1124,11 +1139,13 @@ void handleButtons() {
 }
 
 void handleExtraButton () {
+  switch (currentMenu) {   
     case MENU_CO2:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
       updateDisplay();
       break;
+  }
 }
 
 void incrementCursor() {
@@ -1142,7 +1159,23 @@ void incrementCursor() {
       menuCursor++;
       if (menuCursor > 3) menuCursor = 0;
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0; // 4 opciones
+      break;
+
+    case MENU_TEMP_SET_MIN:
+    case MENU_TEMP_SET_MAX:
+      if (tempEditValue < 30.0) {
+        tempEditValue += 0.5; // Incrementos de 0.5°C
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_SENSOR_PH:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // Fijar, Calibrar, Atrás
@@ -1349,7 +1382,23 @@ void decrementCursor() {
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 3;
+      break;
+
+    case MENU_TEMP_SET_MIN:
+    case MENU_TEMP_SET_MAX:
+      if (tempEditValue > 10.0) {
+        tempEditValue -= 0.5; // Decrementos de 0.5°C
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_SENSOR_PH:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 2; // Ahora son 3 opciones: Fijar, Calibrar, Atrás
@@ -1574,7 +1623,9 @@ void handleSelection() {
       
     case MENU_SENSORS:
       if (menuCursor == 0) {
-        // Temperatura - no hace nada
+        // Temperatura - ir a fijar límites
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 0;
       } else if (menuCursor == 1) {
         // pH - entrar a submenú
         currentMenu = MENU_SENSOR_PH;
@@ -1589,7 +1640,78 @@ void handleSelection() {
         menuCursor = 0;
       }
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      if (menuCursor == 0) {
+        // Editar límite mínimo
+        editingMin = true;
+        tempEditValue = tempLimitMin;
+        currentMenu = MENU_TEMP_SET_MIN;
+      } else if (menuCursor == 1) {
+        // Editar límite máximo
+        editingMin = false;
+        tempEditValue = tempLimitMax;
+        currentMenu = MENU_TEMP_SET_MAX;
+      } else if (menuCursor == 2) {
+        // Guardar
+        currentMenu = MENU_TEMP_CONFIRM_SAVE;
+        menuCursor = 1; // Por defecto en NO
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSORS;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_TEMP_SET_MIN:
+      // Validar que mínimo sea menor que máximo
+      if (tempEditValue >= tempLimitMax) {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Error: Min debe");
+        lcd.setCursor(0, 2);
+        lcd.print("ser menor que Max");
+        delay(2000);
+      } else {
+        tempLimitMin = tempEditValue;
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_TEMP_SET_MAX:
+      // Validar que máximo sea mayor que mínimo
+      if (tempEditValue <= tempLimitMin) {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Error: Max debe");
+        lcd.setCursor(0, 2);
+        lcd.print("ser mayor que Min");
+        delay(2000);
+      } else {
+        tempLimitMax = tempEditValue;
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      if (menuCursor == 0) {
+        // SI - Guardar en EEPROM
+        saveTemperatureLimits();
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Limites guardados!");
+        delay(1500);
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 2;
+      } else {
+        // NO - Volver sin guardar
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 2;
+      }
+      break;
+
     case MENU_SENSOR_PH:
       if (menuCursor == 0) {
         // Fijar - ir al panel de pH
@@ -2334,6 +2456,18 @@ void updateDisplay() {
     case MENU_SENSORS:
       displaySensorsMenu();
       break;
+    case MENU_TEMP_LIMITS:
+      displayTempLimitsMenu();
+      break;
+    case MENU_TEMP_SET_MIN:
+      displayTempSetLimit(true);
+      break;
+    case MENU_TEMP_SET_MAX:
+      displayTempSetLimit(false);
+      break;
+    case MENU_TEMP_CONFIRM_SAVE:
+      displayTempConfirmSave();
+      break;
     case MENU_SENSOR_PH:
       displaySensorPhMenu();
       break;
@@ -2583,12 +2717,21 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SENSORES:");
   
-  // Temperatura
+  // Temperatura con alerta
   lcd.setCursor(0, 1);
   lcd.print(menuCursor == 0 ? "> " : "  ");
   lcd.print("Temp: ");
   lcd.print(temperature, 1);
   lcd.print(" C");
+  
+  // Mostrar alerta si está fuera de límites
+  if (temperature < tempLimitMin) {
+    lcd.setCursor(15, 1);
+    lcd.print("[BAJ]");
+  } else if (temperature > tempLimitMax) {
+    lcd.setCursor(15, 1);
+    lcd.print("[ALT]");
+  }
   
   // pH
   lcd.setCursor(0, 2);
@@ -2596,10 +2739,12 @@ void displaySensorsMenu() {
   lcd.print("pH: ");
   lcd.print(phValue, 2);
   
+  // Turbidez
   lcd.setCursor(0, 3);
   if (menuCursor < 3) {
-  lcd.print(menuCursor == 2 ? "> " : "  ");
-  lcd.print("Turb: ");
+    lcd.print(menuCursor == 2 ? "> " : "  ");
+    lcd.print("Turb: ");
+    float turbidityMCmL = getTurbidityConcentration();
     if (turbidityMCmL >= 0) {
       lcd.print(turbidityMCmL, 1);
       lcd.print(" MC/mL");
@@ -2609,6 +2754,103 @@ void displaySensorsMenu() {
   } else {
     lcd.print("> Atras");
   }
+}
+
+void displayTempLimitsMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("LIMITES TEMP:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Min: ");
+  lcd.print(tempLimitMin, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Max: ");
+  lcd.print(tempLimitMax, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 2) {
+    lcd.print("> Guardar");
+  } else if (menuCursor == 3) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  ");
+    if (menuCursor < 2) {
+      lcd.print("Guardar");
+    }
+  }
+  
+  // Mostrar temperatura actual
+  lcd.setCursor(14, 0);
+  lcd.print("(");
+  lcd.print(temperature, 1);
+  lcd.print(")");
+}
+
+void displayTempSetLimit(bool isMin) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(isMin ? "FIJAR TEMP MIN:" : "FIJAR TEMP MAX:");
+  
+  // Mostrar valor actual siendo editado
+  lcd.setCursor(0, 1);
+  lcd.print("Valor: ");
+  lcd.print(tempEditValue, 1);
+  lcd.print(" C");
+  
+  // Mostrar barra visual
+  lcd.setCursor(0, 2);
+  lcd.print("[");
+  int barPos = map(tempEditValue * 10, 100, 300, 0, 16);
+  for (int i = 0; i < 16; i++) {
+    if (i == barPos) {
+      lcd.print("|");
+    } else if (i == 8) { // Marca en 20°C
+      lcd.print("-");
+    } else {
+      lcd.print(" ");
+    }
+  }
+  lcd.print("]");
+  
+  // Mostrar rango
+  lcd.setCursor(0, 3);
+  lcd.print("Rango: 10-30 C");
+  
+  // Mostrar límite opuesto como referencia
+  lcd.setCursor(15, 3);
+  if (isMin) {
+    lcd.print("M:");
+    lcd.print((int)tempLimitMax);
+  } else {
+    lcd.print("m:");
+    lcd.print((int)tempLimitMin);
+  }
+}
+
+void displayTempConfirmSave() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR LIMITES?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Min: ");
+  lcd.print(tempLimitMin, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Max: ");
+  lcd.print(tempLimitMax, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
 }
 
 void displayWebServerMenu() {
@@ -3262,6 +3504,41 @@ void checkSequenceProgress() {
     
     updateDisplay();
   }
+}
+
+void saveTemperatureLimits() {
+  EEPROM.put(EEPROM_TEMP_MIN, tempLimitMin);
+  EEPROM.put(EEPROM_TEMP_MAX, tempLimitMax);
+  EEPROM.commit();
+  
+  Serial.print("Límites temperatura guardados - Min: ");
+  Serial.print(tempLimitMin);
+  Serial.print(" Max: ");
+  Serial.println(tempLimitMax);
+}
+
+void loadTemperatureLimits() {
+  EEPROM.get(EEPROM_TEMP_MIN, tempLimitMin);
+  EEPROM.get(EEPROM_TEMP_MAX, tempLimitMax);
+  
+  // Validar valores leídos
+  if (isnan(tempLimitMin) || tempLimitMin < 10.0 || tempLimitMin > 30.0) {
+    tempLimitMin = 18.0; // Valor por defecto
+  }
+  if (isnan(tempLimitMax) || tempLimitMax < 10.0 || tempLimitMax > 30.0) {
+    tempLimitMax = 28.0; // Valor por defecto
+  }
+  
+  // Asegurar que min < max
+  if (tempLimitMin >= tempLimitMax) {
+    tempLimitMin = 18.0;
+    tempLimitMax = 28.0;
+  }
+  
+  Serial.print("Límites temperatura cargados - Min: ");
+  Serial.print(tempLimitMin);
+  Serial.print(" Max: ");
+  Serial.println(tempLimitMax);
 }
 
 void saveSequence(int seqIndex) {
