@@ -621,7 +621,104 @@ void setupWebServer() {
     json += "}";
     request->send(200, "application/json", json);
   });
-  
+
+  // Estado del control de pH
+  server.on("/api/ph/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"phValue\":" + String(phValue, 2) + ",";
+    json += "\"phLimit\":" + String(phLimitSet, 1) + ",";
+    json += "\"autoControl\":" + String(phControlActive ? "true" : "false") + ",";
+    json += "\"co2Active\":" + String(co2Active ? "true" : "false") + ",";
+    json += "\"co2InjectionActive\":" + String(co2InjectionActive ? "true" : "false") + ",";
+    json += "\"co2MinutesRemaining\":" + String(co2MinutesRemaining);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Activar control automático de pH
+  server.on("/api/ph/auto/set", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          phLimitSet = doc["limit"];
+          phControlActive = true;
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Desactivar control automático
+  server.on("/api/ph/auto/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    phControlActive = false;
+    if (co2Active && !co2InjectionActive) {
+      co2Active = false;
+      pcfOutput.digitalWrite(P3, HIGH);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Iniciar inyección manual de CO2
+  server.on("/api/co2/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          co2MinutesSet = doc["minutes"];
+          co2MinutesRemaining = co2MinutesSet;
+          co2InjectionActive = true;
+          co2StartTime = millis();
+          pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+          
+          // Si hay modo bucle, guardarlo
+          bool loopMode = doc["loop"] | false;
+          if (loopMode) {
+            // Aquí podrías implementar la lógica del bucle
+            // Por ahora solo guardamos el estado
+          }
+          
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Pausar inyección de CO2
+  server.on("/api/co2/manual/pause", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (co2InjectionActive) {
+      co2InjectionActive = false;
+      pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+      // Guardar tiempo restante para poder reanudar
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Reiniciar inyección de CO2
+  server.on("/api/co2/manual/reset", HTTP_POST, [](AsyncWebServerRequest *request){
+    co2InjectionActive = false;
+    co2MinutesRemaining = 0;
+    co2MinutesSet = 0;
+    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Reanudar inyección pausada
+  server.on("/api/co2/manual/resume", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (co2MinutesRemaining > 0) {
+      co2InjectionActive = true;
+      co2StartTime = millis();
+      pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
 // Control de LEDs individuales - ON/OFF
 server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
   setLED(0, true, 100);
@@ -3721,7 +3818,10 @@ void startCO2Injection() {
 void stopCO2Injection() {
   co2InjectionActive = false;
   co2MinutesRemaining = 0;
-  pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+  if (!phControlActive || phValue <= phLimitSet) {
+    co2Active = false;
+    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+  }
 }
 
 void updateCO2Time() {
@@ -3731,26 +3831,35 @@ void updateCO2Time() {
     
     if (co2MinutesRemaining <= 0) {
       stopCO2Injection();
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
+      if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE) {
+        currentMenu = MENU_PH_PANEL;
+        menuCursor = 1;
+        updateDisplay();
+      }
     }
   }
 }
 
 void checkPhControl() {
   if (phControlActive) {
+    // Usar histéresis para evitar oscilaciones
+    static bool co2WasActive = false;
+    
     if (phValue > phLimitSet + 0.2) {
       // pH alcalino - activar CO2
-      if (!co2Active) {
+      if (!co2Active && !co2InjectionActive) {
         co2Active = true;
+        co2WasActive = true;
         pcfOutput.digitalWrite(P3, LOW);
+        Serial.println("pH alto - Activando CO2");
       }
-    } else if (phValue <= phLimitSet) {
-      // pH en rango - desactivar CO2
-      if (co2Active) {
+    } else if (phValue <= phLimitSet - 0.1) {
+      // pH en rango o ácido - desactivar CO2
+      if (co2Active && co2WasActive && !co2InjectionActive) {
         co2Active = false;
+        co2WasActive = false;
         pcfOutput.digitalWrite(P3, HIGH);
+        Serial.println("pH en rango - Desactivando CO2");
       }
     }
   }

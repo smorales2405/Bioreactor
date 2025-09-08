@@ -53,7 +53,7 @@
                 </div>
 
                 <!-- pH -->
-                <div class="sensor-card">
+                <div class="sensor-card clickable" onclick="showPhControl()">
                     <h3>pH</h3>
                     <div class="sensor-value">
                         <span id="phValue">--</span>
@@ -68,6 +68,7 @@
                             <span class="base">Base</span>
                         </div>
                     </div>
+                    <div class="click-hint">Click para control de pH</div>
                 </div>
 
                 <!-- Concentración -->
@@ -196,6 +197,110 @@
                 </div>
             </div>
         </section>
+
+        <!-- Sección Control de pH -->
+        <section id="phControl" class="section">
+            <button class="btn-back" onclick="showSection('sensors')">← Volver a Sensores</button>
+            <h2>Control de pH</h2>
+            
+            <div class="ph-control-container">
+                <!-- Panel Principal de pH -->
+                <div class="ph-main-panel">
+                    <div class="ph-display">
+                        <div class="ph-current">
+                            <span class="ph-label">pH Actual</span>
+                            <div class="ph-value-large" id="phCurrentLarge">7.5</div>
+                        </div>
+                        <div class="ph-status-indicator" id="phStatusIndicator">
+                            <div class="ph-status-bar"></div>
+                            <div class="ph-status-text" id="phStatusText">EQUILIBRADO</div>
+                        </div>
+                    </div>
+                    
+                    <div class="ph-fixed-display">
+                        <span class="ph-fixed-label">pH FIJADO</span>
+                        <div class="ph-fixed-value" id="phFixedValue">7.0</div>
+                    </div>
+                </div>
+                
+                <!-- Controles -->
+                <div class="ph-controls">
+                    <!-- Control Automático -->
+                    <div class="control-panel">
+                        <h3>Control Automático</h3>
+                        <div class="ph-auto-control">
+                            <label>Fijar pH Límite:</label>
+                            <div class="ph-input-group">
+                                <button class="btn-adjust" onclick="adjustPhLimit(-0.1)">−</button>
+                                <input type="number" id="phLimitInput" min="0" max="14" step="0.1" value="7.0">
+                                <button class="btn-adjust" onclick="adjustPhLimit(0.1)">+</button>
+                            </div>
+                            <button class="btn btn-primary" onclick="setPhAutoControl()">Activar Control Auto</button>
+                            <button class="btn btn-secondary" onclick="stopPhAutoControl()">Desactivar</button>
+                        </div>
+                        
+                        <div class="auto-status">
+                            <p>Estado: <span id="autoControlStatus">INACTIVO</span></p>
+                            <div class="co2-auto-indicator" id="co2AutoIndicator">
+                                <span>CO2 Auto:</span>
+                                <div class="indicator-light" id="co2AutoLight"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Inyección Manual -->
+                    <div class="control-panel">
+                        <h3>Inyección Manual CO2</h3>
+                        
+                        <!-- Configuración de tiempo -->
+                        <div class="time-config">
+                            <label>Tiempo de Inyección:</label>
+                            <div class="time-input-group">
+                                <div class="time-control">
+                                    <label>Minutos</label>
+                                    <div class="input-group">
+                                        <button class="btn-adjust" onclick="adjustCO2Time('minutes', -1)">−</button>
+                                        <input type="number" id="co2Minutes" min="0" max="59" value="0">
+                                        <button class="btn-adjust" onclick="adjustCO2Time('minutes', 1)">+</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Modo programado -->
+                        <div class="programmed-mode">
+                            <label>
+                                <input type="checkbox" id="co2LoopMode">
+                                Modo Bucle (Repetir automáticamente)
+                            </label>
+                            <div id="loopConfig" style="display:none;">
+                                <label>Repetir cada (horas):</label>
+                                <input type="number" id="loopInterval" min="1" max="24" value="4">
+                            </div>
+                        </div>
+                        
+                        <!-- Controles de ejecución -->
+                        <div class="execution-controls">
+                            <button class="btn btn-success" onclick="startCO2Injection()">INICIAR</button>
+                            <button class="btn btn-warning" onclick="pauseCO2Injection()">DETENER</button>
+                            <button class="btn btn-danger" onclick="resetCO2Injection()">REINICIAR</button>
+                        </div>
+                        
+                        <!-- Display de tiempo restante -->
+                        <div class="co2-timer" id="co2Timer">
+                            <div class="timer-display" id="timerDisplay">
+                                <span class="timer-label">CO2 Restante</span>
+                                <div class="timer-value" id="co2TimeRemaining">00:00</div>
+                            </div>
+                            <div class="timer-progress">
+                                <div class="timer-fill" id="timerFill"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Sección Aireación -->
         <section id="aireacion" class="section">
             <h2>Control de Ingreso de Aire y CO2</h2>
@@ -274,7 +379,10 @@
                             <input type="number" id="volumeInput" min="0" max="200" step="5" value="0">
                             <input type="range" id="volumeSlider" min="0" max="200" step="5" value="0">
                         </div>
-                        <button class="btn btn-primary" onclick="startAutoFill()">Iniciar Llenado</button>
+                        <div class="auto-fill-buttons">
+                            <button class="btn btn-primary" id="startFillBtn" onclick="startAutoFill()">Iniciar Llenado</button>
+                            <button class="btn btn-danger" id="stopFillBtn" onclick="stopFilling()" style="display:none;">Detener Llenado</button>
+                        </div>
                     </div>
                     
                     <!-- Control manual -->

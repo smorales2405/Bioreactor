@@ -869,3 +869,319 @@ h1 {
         grid-template-columns: 1fr;
     }
 }
+
+/* pH Control Styles */
+.sensor-card.clickable {
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sensor-card.clickable:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 12px rgba(0, 0, 0, 0.3);
+}
+
+.click-hint {
+    font-size: 12px;
+    color: var(--primary-color);
+    margin-top: 10px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sensor-card.clickable:hover .click-hint {
+    opacity: 1;
+}
+
+.btn-back {
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 20px;
+    transition: all 0.3s ease;
+}
+
+.btn-back:hover {
+    background: var(--surface-light);
+}
+
+.ph-control-container {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 30px;
+    margin-top: 30px;
+}
+
+.ph-main-panel {
+    background: var(--surface);
+    padding: 30px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+
+.ph-display {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.ph-current {
+    margin-bottom: 20px;
+}
+
+.ph-label {
+    display: block;
+    font-size: 14px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.ph-value-large {
+    font-size: 72px;
+    font-weight: bold;
+    color: var(--text-primary);
+    text-shadow: 0 0 20px rgba(37, 99, 235, 0.3);
+}
+
+.ph-status-indicator {
+    width: 100%;
+    height: 40px;
+    background: var(--surface-light);
+    border-radius: 20px;
+    position: relative;
+    overflow: hidden;
+    margin: 20px 0;
+}
+
+.ph-status-bar {
+    height: 100%;
+    width: 100%;
+    transition: background 0.5s ease;
+}
+
+.ph-status-bar.acid {
+    background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.ph-status-bar.neutral {
+    background: linear-gradient(90deg, #06b6d4, #0891b2);
+}
+
+.ph-status-bar.alkaline {
+    background: linear-gradient(90deg, #3b82f6, #2563eb);
+}
+
+.ph-status-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-weight: bold;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.ph-fixed-display {
+    background: var(--surface-light);
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+}
+
+.ph-fixed-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+}
+
+.ph-fixed-value {
+    font-size: 36px;
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
+.ph-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.control-panel {
+    background: var(--surface);
+    padding: 25px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+}
+
+.control-panel h3 {
+    margin-bottom: 20px;
+    color: var(--primary-color);
+}
+
+.ph-input-group, .input-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 15px 0;
+}
+
+.btn-adjust {
+    width: 40px;
+    height: 40px;
+    border: none;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 8px;
+    font-size: 24px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-adjust:hover {
+    background: #1d4ed8;
+}
+
+#phLimitInput, #co2Minutes {
+    width: 100px;
+    padding: 10px;
+    background: var(--surface-light);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-align: center;
+    font-size: 18px;
+}
+
+.auto-status {
+    margin-top: 20px;
+    padding: 15px;
+    background: var(--surface-light);
+    border-radius: 8px;
+}
+
+.co2-auto-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.indicator-light {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--danger-color);
+    transition: all 0.3s ease;
+}
+
+.indicator-light.active {
+    background: var(--success-color);
+    box-shadow: 0 0 10px var(--success-color);
+}
+
+.time-config {
+    margin: 20px 0;
+}
+
+.time-control label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+}
+
+.programmed-mode {
+    margin: 20px 0;
+    padding: 15px;
+    background: var(--surface-light);
+    border-radius: 8px;
+}
+
+.execution-controls {
+    display: flex;
+    gap: 10px;
+    margin: 20px 0;
+}
+
+.execution-controls button {
+    flex: 1;
+}
+
+.btn-success {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-warning {
+    background: var(--warning-color);
+    color: white;
+}
+
+.co2-timer {
+    margin-top: 20px;
+    padding: 20px;
+    background: var(--surface-light);
+    border-radius: 10px;
+}
+
+.timer-display {
+    text-align: center;
+    margin-bottom: 15px;
+}
+
+.timer-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+}
+
+.timer-value {
+    font-size: 36px;
+    font-weight: bold;
+    color: var(--text-primary);
+}
+
+.timer-value.expired {
+    color: var(--danger-color);
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.timer-progress {
+    height: 10px;
+    background: var(--background);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.timer-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--success-color), var(--primary-color));
+    transition: width 1s linear;
+}
+
+.auto-fill-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 15px;
+}
+
+.auto-fill-buttons button {
+    flex: 1;
+}
+
+@media (max-width: 768px) {
+    .ph-control-container {
+        grid-template-columns: 1fr;
+    }
+}

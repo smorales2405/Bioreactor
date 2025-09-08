@@ -21,6 +21,16 @@ let fillingActive = false;
 let currentVolumeValue = 0;
 let targetVolumeValue = 0;
 
+// Variables para control de pH
+let phAutoControl = false;
+let phLimit = 7.0;
+let co2InjectionTime = 0;
+let co2TimeRemaining = 0;
+let co2InjectionActive = false;
+let co2LoopMode = false;
+let co2LoopInterval = 4;
+let co2Timer = null;
+
 // Configuración de actualización
 const UPDATE_INTERVAL = 2000; // 2 segundos
 
@@ -653,12 +663,17 @@ async function updateFillingStatus() {
                 
                 document.getElementById('fillingVolume').textContent = data.volumeLlenado.toFixed(1);
                 document.getElementById('targetVolume').textContent = data.targetVolume.toFixed(0);
-                
+                document.getElementById('startFillBtn').style.display = 'none';
+                document.getElementById('stopFillBtn').style.display = 'inline-block';
+
+
                 const progress = (data.volumeLlenado / data.targetVolume) * 100;
                 document.getElementById('progressFill').style.width = progress + '%';
             } else {
                 fillingStatusText.textContent = 'Bomba Manual Activa';
                 fillingProgress.style.display = 'none';
+                document.getElementById('startFillBtn').style.display = 'inline-block';
+                document.getElementById('stopFillBtn').style.display = 'none';
             }
         } else {
             fillingActive = false;
@@ -690,6 +705,9 @@ async function startAutoFill() {
             body: `volume=${volume}`
         });
         
+        document.getElementById('startFillBtn').style.display = 'none';
+        document.getElementById('stopFillBtn').style.display = 'inline-block';    
+
         updateFillingStatus();
     } catch (error) {
         console.error('Error iniciando llenado:', error);
@@ -722,6 +740,263 @@ async function resetVolume() {
     }
 }
 
+// Mostrar control de pH
+function showPhControl() {
+    document.querySelectorAll('.section').forEach(s => {
+        s.classList.remove('active');
+    });
+    document.getElementById('phControl').classList.add('active');
+    updatePhControlDisplay();
+}
+
+// Actualizar display de control de pH
+function updatePhControlDisplay() {
+    const phValue = parseFloat(document.getElementById('phValue').textContent) || 7.0;
+    document.getElementById('phCurrentLarge').textContent = phValue.toFixed(1);
+    
+    // Actualizar indicador de estado
+    const statusBar = document.querySelector('.ph-status-bar');
+    const statusText = document.getElementById('phStatusText');
+    
+    if (phValue < phLimit - 0.2) {
+        statusBar.className = 'ph-status-bar acid';
+        statusText.textContent = 'ÁCIDO';
+    } else if (phValue > phLimit + 0.2) {
+        statusBar.className = 'ph-status-bar alkaline';
+        statusText.textContent = 'ALCALINO';
+    } else {
+        statusBar.className = 'ph-status-bar neutral';
+        statusText.textContent = 'EQUILIBRADO';
+    }
+    
+    document.getElementById('phFixedValue').textContent = phLimit.toFixed(1);
+}
+
+// Ajustar límite de pH
+function adjustPhLimit(delta) {
+    phLimit = Math.max(0, Math.min(14, phLimit + delta));
+    document.getElementById('phLimitInput').value = phLimit.toFixed(1);
+    updatePhControlDisplay();
+}
+
+// Activar control automático de pH
+async function setPhAutoControl() {
+    phLimit = parseFloat(document.getElementById('phLimitInput').value);
+    
+    try {
+        await fetch(`/api/ph/auto/set`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ limit: phLimit })
+        });
+        
+        phAutoControl = true;
+        document.getElementById('autoControlStatus').textContent = 'ACTIVO';
+        document.getElementById('co2AutoLight').classList.add('active');
+        
+        console.log(`Control automático activado. pH límite: ${phLimit}`);
+    } catch (error) {
+        console.error('Error activando control automático:', error);
+    }
+}
+
+// Desactivar control automático
+async function stopPhAutoControl() {
+    try {
+        await fetch(`/api/ph/auto/stop`, { method: 'POST' });
+        
+        phAutoControl = false;
+        document.getElementById('autoControlStatus').textContent = 'INACTIVO';
+        document.getElementById('co2AutoLight').classList.remove('active');
+        
+        console.log('Control automático desactivado');
+    } catch (error) {
+        console.error('Error desactivando control automático:', error);
+    }
+}
+
+// Ajustar tiempo de CO2
+function adjustCO2Time(unit, delta) {
+    if (unit === 'minutes') {
+        let minutes = parseInt(document.getElementById('co2Minutes').value) || 0;
+        minutes = Math.max(0, Math.min(59, minutes + delta));
+        document.getElementById('co2Minutes').value = minutes;
+    }
+}
+
+// Checkbox de modo bucle
+document.addEventListener('DOMContentLoaded', function() {
+    const loopCheckbox = document.getElementById('co2LoopMode');
+    if (loopCheckbox) {
+        loopCheckbox.addEventListener('change', function() {
+            document.getElementById('loopConfig').style.display = 
+                this.checked ? 'block' : 'none';
+            co2LoopMode = this.checked;
+        });
+    }
+});
+
+// Iniciar inyección de CO2
+async function startCO2Injection() {
+    if (co2InjectionActive) {
+        alert('Ya hay una inyección en progreso');
+        return;
+    }
+    
+    const minutes = parseInt(document.getElementById('co2Minutes').value) || 0;
+    
+    if (minutes === 0) {
+        alert('Por favor configure el tiempo de inyección');
+        return;
+    }
+    
+    co2InjectionTime = minutes * 60; // Convertir a segundos
+    co2TimeRemaining = co2InjectionTime;
+    co2InjectionActive = true;
+    
+    if (co2LoopMode) {
+        co2LoopInterval = parseInt(document.getElementById('loopInterval').value) || 4;
+    }
+    
+    try {
+         await fetch(`/api/co2/manual/start`, {
+             method: 'POST',
+             body: JSON.stringify({ 
+                 minutes: minutes,
+                 loop: co2LoopMode,
+                 interval: co2LoopInterval
+             })
+         });
+        
+        startCO2Timer();
+        console.log(`Inyección de CO2 iniciada: ${minutes} minutos`);
+    } catch (error) {
+        console.error('Error iniciando inyección:', error);
+    }
+}
+
+// Timer de CO2
+function startCO2Timer() {
+    if (co2Timer) clearInterval(co2Timer);
+    
+    co2Timer = setInterval(() => {
+        if (co2TimeRemaining > 0) {
+            co2TimeRemaining--;
+            updateCO2TimerDisplay();
+        } else {
+            // Tiempo expirado
+            document.getElementById('timerDisplay').classList.add('expired');
+            
+            if (co2LoopMode) {
+                // Reiniciar en modo bucle
+                setTimeout(() => {
+                    co2TimeRemaining = co2InjectionTime;
+                    document.getElementById('timerDisplay').classList.remove('expired');
+                }, co2LoopInterval * 3600000); // Convertir horas a ms
+            } else {
+                // Detener
+                co2InjectionActive = false;
+                clearInterval(co2Timer);
+            }
+        }
+    }, 1000);
+}
+
+// Actualizar display del timer
+function updateCO2TimerDisplay() {
+    const minutes = Math.floor(co2TimeRemaining / 60);
+    const seconds = co2TimeRemaining % 60;
+    
+    const display = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    document.getElementById('co2TimeRemaining').textContent = display;
+    
+    const progress = (co2TimeRemaining / co2InjectionTime) * 100;
+    document.getElementById('timerFill').style.width = progress + '%';
+    
+    if (co2TimeRemaining === 0) {
+        document.getElementById('co2TimeRemaining').style.color = 'var(--danger-color)';
+    }
+}
+
+// Pausar inyección
+async function pauseCO2Injection() {
+    if (!co2InjectionActive) return;
+    
+    try {
+        await fetch(`/api/co2/manual/pause`, { method: 'POST' });
+        
+        if (co2Timer) clearInterval(co2Timer);
+        console.log('Inyección pausada');
+    } catch (error) {
+        console.error('Error pausando inyección:', error);
+    }
+}
+
+// Reiniciar inyección
+async function resetCO2Injection() {
+    try {
+        await fetch(`/api/co2/manual/reset`, { method: 'POST' });
+        
+        co2InjectionActive = false;
+        co2TimeRemaining = 0;
+        if (co2Timer) clearInterval(co2Timer);
+        
+        document.getElementById('co2Minutes').value = 0;
+        document.getElementById('co2TimeRemaining').textContent = '00:00';
+        document.getElementById('timerFill').style.width = '0%';
+        document.getElementById('timerDisplay').classList.remove('expired');
+        
+        console.log('Inyección reiniciada');
+    } catch (error) {
+        console.error('Error reiniciando inyección:', error);
+    }
+}
+
+// Detener llenado automático
+async function stopFilling() {
+    try {
+        await fetch(`/api/llenado/stop`, { method: 'POST' });
+        
+        document.getElementById('startFillBtn').style.display = 'inline-block';
+        document.getElementById('stopFillBtn').style.display = 'none';
+        
+        updateFillingStatus();
+    } catch (error) {
+        console.error('Error deteniendo llenado:', error);
+    }
+}
+
+async function updatePhStatus() {
+    if (document.getElementById('phControl').classList.contains('active')) {
+        try {
+            const response = await fetch(`${SERVER_URL}/api/ph/status`);
+            const data = await response.json();
+            
+            document.getElementById('phCurrentLarge').textContent = data.phValue.toFixed(1);
+            document.getElementById('phFixedValue').textContent = data.phLimit.toFixed(1);
+            
+            if (data.autoControl) {
+                document.getElementById('autoControlStatus').textContent = 'ACTIVO';
+                document.getElementById('co2AutoLight').classList.add('active');
+            } else {
+                document.getElementById('autoControlStatus').textContent = 'INACTIVO';
+                document.getElementById('co2AutoLight').classList.remove('active');
+            }
+            
+            if (data.co2InjectionActive) {
+                co2TimeRemaining = data.co2MinutesRemaining * 60;
+                updateCO2TimerDisplay();
+            }
+            
+            updatePhControlDisplay();
+        } catch (error) {
+            console.error('Error actualizando estado pH:', error);
+        }
+    }
+}
+
 function closeModal() {
    document.getElementById('configModal').style.display = 'none';
 }
@@ -733,6 +1008,7 @@ function startDataUpdate() {
     updateSequenceStatus();
     updateAireacionStatus();
     updateFillingStatus();
+    updatePhStatus();
 
     setInterval(() => {
         updateSensorData();
@@ -740,5 +1016,6 @@ function startDataUpdate() {
         updateSequenceStatus();
         updateAireacionStatus();
         updateFillingStatus();
+        updatePhStatus();
     }, UPDATE_INTERVAL);
 }
