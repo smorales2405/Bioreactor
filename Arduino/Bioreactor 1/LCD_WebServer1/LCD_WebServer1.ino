@@ -37,6 +37,8 @@ Adafruit_ADS1115 ads;
 // === Pin del Boton Emergencia ===
 #define EMERGENCY_PIN 39
 
+#define BUZZER_PIN 33  // Pin PWM para el buzzer
+
 // === Pin SQW del RTC ===
 #define SQW_PIN 17
 
@@ -45,6 +47,14 @@ Adafruit_ADS1115 ads;
 #define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
 #define K_FACTOR 7.5
 #define PULSOS_POR_LITRO (K_FACTOR * 60)
+
+// Variables para control de alarmas
+bool alarmActive = false;
+bool tempAlarm = false;
+bool phAlarm = false;
+bool emergencyAlarm = false;
+unsigned long lastAlarmCheck = 0;
+const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
 
 // Variables de flujo
 volatile unsigned long pulseCount = 0;
@@ -375,6 +385,9 @@ void setup() {
     ledcWrite(ledPins[i], 0);
   }
   
+  ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
+  ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
+
   // Inicializar RTC
   if (!rtc.begin()) {
     Serial.println("RTC no detectado!");
@@ -483,6 +496,9 @@ void loop() {
   if (millis() - lastSensorRead > sensorReadInterval) {
     lastSensorRead = millis();
     readSensors();
+    // Verificar alarmas después de leer sensores
+    checkAlarms();
+
     
     // Actualizar display si estamos en el menú de sensores
     if (currentMenu == MENU_SENSORS) {
@@ -2717,6 +2733,12 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SENSORES:");
   
+  // Indicador de alarma activa
+  if (alarmActive) {
+    lcd.setCursor(12, 0);
+    lcd.print("[ALARMA]");
+  }
+
   // Temperatura con alerta
   lcd.setCursor(0, 1);
   lcd.print(menuCursor == 0 ? "> " : "  ");
@@ -2739,6 +2761,11 @@ void displaySensorsMenu() {
   lcd.print("pH: ");
   lcd.print(phValue, 2);
   
+  if (phAlarm) {
+  lcd.setCursor(14, 2);
+  lcd.print("[ALM]");
+  }
+
   // Turbidez
   lcd.setCursor(0, 3);
   if (menuCursor < 3) {
@@ -5043,7 +5070,70 @@ void displayTurbConfirmConcentration() {
   lcd.print(menuCursor == 1 ? "> NO" : "  NO");
 }
 
+void checkAlarms() {
+  // Solo verificar cada cierto intervalo
+  if (millis() - lastAlarmCheck < alarmCheckInterval) {
+    return;
+  }
+  lastAlarmCheck = millis();
+  
+  bool shouldActivateAlarm = false;
+  
+  // Verificar alarma de temperatura
+  tempAlarm = false;
+  if (temperature >= 10.0 && temperature <= 40.0) {
+    // Solo activar si está dentro del rango válido pero fuera de límites
+    if (temperature < tempLimitMin || temperature > tempLimitMax) {
+      tempAlarm = true;
+      shouldActivateAlarm = true;
+      Serial.println("ALARMA: Temperatura fuera de límites");
+    }
+  }
+  
+  // Verificar alarma de pH (solo si el control está activo)
+  phAlarm = false;
+  if (phControlActive && phValue < phLimitSet) {
+    phAlarm = true;
+    shouldActivateAlarm = true;
+    Serial.println("ALARMA: pH bajo el límite fijado");
+  }
+  
+  // La alarma de emergencia se maneja en handleEmergencyState()
+  if (emergencyAlarm) {
+    shouldActivateAlarm = true;
+  }
+  
+  // Activar o desactivar alarmas según corresponda
+  if (shouldActivateAlarm && !alarmActive) {
+    activateAlarm();
+  } else if (!shouldActivateAlarm && alarmActive && !emergencyAlarm) {
+    deactivateAlarm();
+  }
+}
 
+void activateAlarm() {
+  alarmActive = true;
+  
+  // Activar buzzer al 100%
+  ledcWrite(BUZZER_PIN, 255); // 100% PWM
+  
+  // Activar LED rojo de alarma
+  pcfOutput.digitalWrite(P4, LOW); // LOW = encendido (verificar lógica)
+  
+  Serial.println("*** ALARMA ACTIVADA ***");
+}
+
+void deactivateAlarm() {
+  alarmActive = false;
+  
+  // Desactivar buzzer
+  ledcWrite(BUZZER_PIN, 0);
+  
+  // Desactivar LED de alarma
+  pcfOutput.digitalWrite(P4, HIGH); // HIGH = apagado (verificar lógica)
+  
+  Serial.println("Alarma desactivada");
+}
 
 void handleEmergencyState() {
   static bool lastEmergencyState = false;
@@ -5052,7 +5142,11 @@ void handleEmergencyState() {
   // Detectar cuando se presiona el botón (transición de LOW a HIGH)
   if (currentEmergencyState && !lastEmergencyState) {
     emergencyActive = true;
-    
+    emergencyAlarm = true;
+
+    // Activar alarma de emergencia inmediatamente
+    activateAlarm();
+
     // Apagar todas las salidas
     for (int i = 0; i < 4; i++) {
       pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
@@ -5084,7 +5178,11 @@ void handleEmergencyState() {
   // Detectar cuando se suelta el botón (transición de HIGH a LOW)
   else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
     emergencyActive = false;
+    emergencyAlarm = false;
     
+    // Desactivar alarma de emergencia
+    deactivateAlarm();
+
     // Volver al menú principal
     currentMenu = MENU_MAIN;
     menuCursor = 0;
