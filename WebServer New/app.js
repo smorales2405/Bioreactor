@@ -971,7 +971,7 @@ async function stopFilling() {
 async function updatePhStatus() {
     if (document.getElementById('phControl').classList.contains('active')) {
         try {
-            const response = await fetch(`${SERVER_URL}/api/ph/status`);
+            const response = await fetch(`/api/ph/status`);
             const data = await response.json();
             
             document.getElementById('phCurrentLarge').textContent = data.phValue.toFixed(1);

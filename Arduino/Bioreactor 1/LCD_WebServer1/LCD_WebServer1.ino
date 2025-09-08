@@ -639,6 +639,10 @@ void setupWebServer() {
     request->send(SD, "/styles.css", "text/css");
   });
 
+  server.on("/chart.umd.min.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/chart.umd.min.js", "text/js");
+  });   
+
   server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SD, "/app.js", "text/js");
   });  
