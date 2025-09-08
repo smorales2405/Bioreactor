@@ -5092,7 +5092,7 @@ void checkAlarms() {
   
   // Verificar alarma de pH (solo si el control está activo)
   phAlarm = false;
-  if (phControlActive && phValue < phLimitSet) {
+  if (phControlActive && !co2Active && !co2InjectionActive && phValue < phLimitSet) {
     phAlarm = true;
     shouldActivateAlarm = true;
     Serial.println("ALARMA: pH bajo el límite fijado");
