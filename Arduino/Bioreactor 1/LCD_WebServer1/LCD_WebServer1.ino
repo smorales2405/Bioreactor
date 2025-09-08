@@ -1124,7 +1124,11 @@ void handleButtons() {
 }
 
 void handleExtraButton () {
-  return;
+    case MENU_CO2:
+      currentMenu = MENU_MAIN;
+      menuCursor = 4;
+      updateDisplay();
+      break;
 }
 
 void incrementCursor() {
