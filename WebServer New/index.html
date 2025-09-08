@@ -30,6 +30,18 @@
                 </svg>
                 Control LED
             </button>
+            <button class="nav-btn" onclick="showSection('aireacion')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                </svg>
+                Aireación
+            </button>
+            <button class="nav-btn" onclick="showSection('llenado')">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <path d="M20 7l-8 5-8-5m16 0v10a2 2 0 01-2 2H6a2 2 0 01-2-2V7m16 0l-8-5-8 5"/>
+                </svg>
+                Llenado
+            </button>
         </nav>
 
         <!-- Sección Sensores -->
@@ -189,6 +201,109 @@
 
                 <div class="sequences-grid" id="sequencesList">
                     <!-- Las secuencias se cargarán dinámicamente -->
+                </div>
+            </div>
+        </section>
+        <!-- Sección Aireación -->
+        <section id="aireacion" class="section">
+            <h2>Control de Aireación y CO2</h2>
+            
+            <div class="aireacion-grid">
+                <!-- Control de Aireación -->
+                <div class="control-card">
+                    <h3>Aireación</h3>
+                    <div class="status-indicator-large" id="aireacionIndicator">
+                        <svg width="60" height="60" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                        </svg>
+                    </div>
+                    <div class="status-text" id="aireacionStatus">APAGADO</div>
+                    <div class="control-buttons">
+                        <button class="btn btn-on" onclick="controlAireacion(true)">Encender</button>
+                        <button class="btn btn-off" onclick="controlAireacion(false)">Apagar</button>
+                    </div>
+                </div>
+                
+                <!-- Control de CO2 -->
+                <div class="control-card">
+                    <h3>Inyección CO2</h3>
+                    <div class="status-indicator-large" id="co2Indicator">
+                        <svg width="60" height="60" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="12" r="3"/>
+                            <circle cx="6" cy="12" r="2"/>
+                            <circle cx="18" cy="12" r="2"/>
+                        </svg>
+                    </div>
+                    <div class="status-text" id="co2Status">APAGADO</div>
+                    <div class="control-buttons">
+                        <button class="btn btn-on" onclick="controlCO2(true)">Encender</button>
+                        <button class="btn btn-off" onclick="controlCO2(false)">Apagar</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Sección Llenado -->
+        <section id="llenado" class="section">
+            <h2>Control de Llenado de Agua</h2>
+            
+            <div class="llenado-container">
+                <!-- Display de volumen -->
+                <div class="volume-display">
+                    <h3>Volumen Actual</h3>
+                    <div class="volume-value">
+                        <span id="currentVolume">0.0</span>
+                        <span class="unit">L</span>
+                    </div>
+                    <div class="volume-gauge">
+                        <div class="volume-fill" id="volumeFill"></div>
+                        <div class="volume-scale">0 - 200 L</div>
+                    </div>
+                </div>
+                
+                <!-- Control de llenado -->
+                <div class="filling-control">
+                    <h3>Control de Llenado</h3>
+                    
+                    <!-- Estado de llenado -->
+                    <div class="filling-status" id="fillingStatus">
+                        <p>Estado: <span id="fillingStatusText">Inactivo</span></p>
+                        <div id="fillingProgress" style="display:none;">
+                            <p>Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Control automático -->
+                    <div class="auto-fill">
+                        <h4>Llenado Automático</h4>
+                        <div class="volume-input">
+                            <label>Volumen deseado (L):</label>
+                            <input type="number" id="volumeInput" min="0" max="200" step="5" value="0">
+                            <input type="range" id="volumeSlider" min="0" max="200" step="5" value="0">
+                        </div>
+                        <button class="btn btn-primary" onclick="startAutoFill()">Iniciar Llenado</button>
+                    </div>
+                    
+                    <!-- Control manual -->
+                    <div class="manual-control">
+                        <h4>Control Manual de Bomba</h4>
+                        <div class="pump-status">
+                            <div class="pump-indicator" id="pumpIndicator"></div>
+                            <span id="pumpStatus">Bomba APAGADA</span>
+                        </div>
+                        <div class="control-buttons">
+                            <button class="btn btn-on" onclick="controlPump(true)">Encender Bomba</button>
+                            <button class="btn btn-off" onclick="controlPump(false)">Apagar Bomba</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Botón de reinicio -->
+                    <div class="reset-section">
+                        <button class="btn btn-secondary" onclick="resetVolume()">Reiniciar Volumen</button>
+                    </div>
                 </div>
             </div>
         </section>

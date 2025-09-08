@@ -13,6 +13,14 @@ let sequences = [];
 let tempChart = null;
 let phChart = null;
 
+// Variables para control de aireación y llenado
+let aireacionState = false;
+let co2State = false;
+let pumpState = false;
+let fillingActive = false;
+let currentVolumeValue = 0;
+let targetVolumeValue = 0;
+
 // Configuración de actualización
 const UPDATE_INTERVAL = 2000; // 2 segundos
 
@@ -22,6 +30,20 @@ document.addEventListener('DOMContentLoaded', function() {
     loadSequences();
     startDataUpdate();
     updateConnectionStatus(true);
+
+    const volumeInput = document.getElementById('volumeInput');
+    const volumeSlider = document.getElementById('volumeSlider');
+    
+    if (volumeInput && volumeSlider) {
+        volumeInput.addEventListener('input', function() {
+            volumeSlider.value = this.value;
+        });
+        
+        volumeSlider.addEventListener('input', function() {
+            volumeInput.value = this.value;
+        });
+    }
+
 });
 
 // Funciones de navegación
@@ -540,19 +562,183 @@ async function deleteSequence(id) {
    }
 }
 
+// Control de Aireación
+async function controlAireacion(state) {
+    try {
+        const endpoint = state ? '/api/aireacion/on' : '/api/aireacion/off';
+        await fetch(`${endpoint}`);
+        updateAireacionStatus();
+    } catch (error) {
+        console.error('Error controlando aireación:', error);
+    }
+}
+
+// Control de CO2
+async function controlCO2(state) {
+    try {
+        const endpoint = state ? '/api/co2/on' : '/api/co2/off';
+        await fetch(`${endpoint}`);
+        updateAireacionStatus();
+    } catch (error) {
+        console.error('Error controlando CO2:', error);
+    }
+}
+
+// Actualizar estado de aireación y CO2
+async function updateAireacionStatus() {
+    try {
+        const response = await fetch(`/api/aireacion/status`);
+        const data = await response.json();
+        
+        // Actualizar indicadores de aireación
+        const aireacionIndicator = document.getElementById('aireacionIndicator');
+        const aireacionStatus = document.getElementById('aireacionStatus');
+        
+        if (data.aireacion) {
+            aireacionIndicator.classList.add('active');
+            aireacionStatus.textContent = 'ENCENDIDO';
+            aireacionState = true;
+        } else {
+            aireacionIndicator.classList.remove('active');
+            aireacionStatus.textContent = 'APAGADO';
+            aireacionState = false;
+        }
+        
+        // Actualizar indicadores de CO2
+        const co2Indicator = document.getElementById('co2Indicator');
+        const co2Status = document.getElementById('co2Status');
+        
+        if (data.co2) {
+            co2Indicator.classList.add('active-co2');
+            co2Status.textContent = 'ENCENDIDO';
+            co2State = true;
+        } else {
+            co2Indicator.classList.remove('active-co2');
+            co2Status.textContent = 'APAGADO';
+            co2State = false;
+        }
+    } catch (error) {
+        console.error('Error obteniendo estado de aireación:', error);
+    }
+}
+
+// Control de Llenado
+async function updateFillingStatus() {
+    try {
+        const response = await fetch(`/api/llenado/status`);
+        const data = await response.json();
+        
+        // Actualizar volumen actual
+        currentVolumeValue = data.volumeTotal;
+        document.getElementById('currentVolume').textContent = currentVolumeValue.toFixed(1);
+        
+        // Actualizar gauge de volumen
+        const percentage = (currentVolumeValue / 200) * 100;
+        document.getElementById('volumeFill').style.height = percentage + '%';
+        
+        // Actualizar estado de llenado
+        const fillingStatusText = document.getElementById('fillingStatusText');
+        const fillingProgress = document.getElementById('fillingProgress');
+        const pumpIndicator = document.getElementById('pumpIndicator');
+        const pumpStatus = document.getElementById('pumpStatus');
+        
+        if (data.fillingActive) {
+            fillingActive = true;
+            pumpIndicator.classList.add('active');
+            pumpStatus.textContent = 'Bomba ENCENDIDA';
+            
+            if (!data.isManualMode) {
+                fillingStatusText.textContent = 'Llenando...';
+                fillingProgress.style.display = 'block';
+                
+                document.getElementById('fillingVolume').textContent = data.volumeLlenado.toFixed(1);
+                document.getElementById('targetVolume').textContent = data.targetVolume.toFixed(0);
+                
+                const progress = (data.volumeLlenado / data.targetVolume) * 100;
+                document.getElementById('progressFill').style.width = progress + '%';
+            } else {
+                fillingStatusText.textContent = 'Bomba Manual Activa';
+                fillingProgress.style.display = 'none';
+            }
+        } else {
+            fillingActive = false;
+            pumpIndicator.classList.remove('active');
+            pumpStatus.textContent = 'Bomba APAGADA';
+            fillingStatusText.textContent = 'Inactivo';
+            fillingProgress.style.display = 'none';
+        }
+    } catch (error) {
+        console.error('Error obteniendo estado de llenado:', error);
+    }
+}
+
+// Iniciar llenado automático
+async function startAutoFill() {
+    const volume = document.getElementById('volumeInput').value;
+    
+    if (volume <= 0 || volume > 200) {
+        alert('Por favor ingrese un volumen válido entre 1 y 200 litros');
+        return;
+    }
+    
+    try {
+        await fetch(`/api/llenado/start`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `volume=${volume}`
+        });
+        
+        updateFillingStatus();
+    } catch (error) {
+        console.error('Error iniciando llenado:', error);
+    }
+}
+
+// Control manual de bomba
+async function controlPump(state) {
+    try {
+        if (state) {
+            await fetch(`/api/llenado/manual/start`, { method: 'POST' });
+        } else {
+            await fetch(`/api/llenado/stop`, { method: 'POST' });
+        }
+        updateFillingStatus();
+    } catch (error) {
+        console.error('Error controlando bomba:', error);
+    }
+}
+
+// Reiniciar volumen
+async function resetVolume() {
+    if (confirm('¿Está seguro de reiniciar el volumen a 0?')) {
+        try {
+            await fetch(`/api/llenado/reset`, { method: 'POST' });
+            updateFillingStatus();
+        } catch (error) {
+            console.error('Error reiniciando volumen:', error);
+        }
+    }
+}
+
 function closeModal() {
    document.getElementById('configModal').style.display = 'none';
 }
 
 // Actualización periódica
 function startDataUpdate() {
-   updateSensorData();
-   updateLedStatus();
-   updateSequenceStatus();
-   
-   setInterval(() => {
-       updateSensorData();
-       updateLedStatus();
-       updateSequenceStatus();
-   }, UPDATE_INTERVAL);
+    updateSensorData();
+    updateLedStatus();
+    updateSequenceStatus();
+    updateAireacionStatus();
+    updateFillingStatus();
+
+    setInterval(() => {
+        updateSensorData();
+        updateLedStatus();
+        updateSequenceStatus();
+        updateAireacionStatus();
+        updateFillingStatus();
+    }, UPDATE_INTERVAL);
 }
