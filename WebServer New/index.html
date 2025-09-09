@@ -37,7 +37,7 @@
             <h2>Monitoreo de Sensores</h2>
             
             <div class="sensors-grid">
-                <!-- Temperatura -->
+                <!-- Temperatura (modificar en la sección de sensores) -->
                 <div class="sensor-card">
                     <h3>Temperatura</h3>
                     <div class="sensor-value">
@@ -48,6 +48,13 @@
                         <div class="gauge" id="tempGauge">
                             <div class="gauge-fill"></div>
                             <div class="gauge-label">0°C - 50°C</div>
+                        </div>
+                    </div>
+                    <div class="temp-limits">
+                        <button class="btn btn-secondary btn-small" onclick="showTempLimits()">Fijar Límites</button>
+                        <div class="limits-display">
+                            <span class="limit-min">Min: <span id="tempLimitMin">--</span>°C</span>
+                            <span class="limit-max">Max: <span id="tempLimitMax">--</span>°C</span>
                         </div>
                     </div>
                 </div>
@@ -98,6 +105,19 @@
                     <canvas id="phChart"></canvas>
                 </div>
             </div>
+
+            <div id="alarmPanel" class="alarm-panel" style="display:none;">
+                <div class="alarm-content">
+                    <div class="alarm-header">
+                        <h3>⚠️ ALARMA ACTIVA</h3>
+                        <button class="btn-close" onclick="silenceAlarm()">Silenciar</button>
+                    </div>
+                    <div class="alarm-reasons" id="alarmReasons">
+                        <!-- Se llenará dinámicamente -->
+                    </div>
+                </div>
+            </div>
+
         </section>
 
         <!-- Sección Control LED -->
@@ -424,6 +444,53 @@
                 <div class="modal-buttons">
                     <button class="btn btn-primary" onclick="saveSequence()">Guardar</button>
                     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="tempLimitsModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeTempLimitsModal()">&times;</span>
+            <h2>Configurar Límites de Temperatura</h2>
+            
+            <div class="limits-config">
+                <div class="limit-group">
+                    <label>Límite Mínimo (°C):</label>
+                    <div class="input-group">
+                        <button class="btn-adjust" onclick="adjustTempLimit('min', -0.5)">−</button>
+                        <input type="number" id="tempMinInput" min="10" max="30" step="0.5" value="18">
+                        <button class="btn-adjust" onclick="adjustTempLimit('min', 0.5)">+</button>
+                    </div>
+                    <input type="range" id="tempMinSlider" min="10" max="30" step="0.5" value="18">
+                </div>
+                
+                <div class="limit-group">
+                    <label>Límite Máximo (°C):</label>
+                    <div class="input-group">
+                        <button class="btn-adjust" onclick="adjustTempLimit('max', -0.5)">−</button>
+                        <input type="number" id="tempMaxInput" min="10" max="30" step="0.5" value="28">
+                        <button class="btn-adjust" onclick="adjustTempLimit('max', 0.5)">+</button>
+                    </div>
+                    <input type="range" id="tempMaxSlider" min="10" max="30" step="0.5" value="28">
+                </div>
+                
+                <div class="limits-preview">
+                    <div class="preview-bar">
+                        <div class="preview-range" id="tempRangePreview"></div>
+                        <div class="preview-min" id="previewMin"></div>
+                        <div class="preview-max" id="previewMax"></div>
+                    </div>
+                    <div class="preview-labels">
+                        <span>10°C</span>
+                        <span>20°C</span>
+                        <span>30°C</span>
+                    </div>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button class="btn btn-primary" onclick="saveTempLimits()">Guardar</button>
+                    <button class="btn btn-secondary" onclick="closeTempLimitsModal()">Cancelar</button>
                 </div>
             </div>
         </div>

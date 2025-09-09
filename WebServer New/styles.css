@@ -1185,3 +1185,176 @@ h1 {
         grid-template-columns: 1fr;
     }
 }
+
+/* Límites de temperatura */
+.temp-limits {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid var(--border-color);
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.limits-display {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 14px;
+}
+
+.limit-min {
+    color: #3b82f6;
+}
+
+.limit-max {
+    color: #ef4444;
+}
+
+/* Panel de Alarmas */
+.alarm-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 999;
+    animation: slideIn 0.3s ease;
+}
+
+.alarm-panel.active {
+    display: block !important;
+}
+
+.alarm-content {
+    background: var(--danger-color);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(239, 68, 68, 0.5);
+    min-width: 300px;
+    animation: pulse 2s infinite;
+}
+
+.alarm-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.alarm-header h3 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.btn-close {
+    background: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: white;
+    padding: 5px 15px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-close:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.alarm-reasons {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.alarm-reason {
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.alarm-reason:last-child {
+    border-bottom: none;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Modal de límites */
+.limits-config {
+    margin-top: 20px;
+}
+
+.limit-group {
+    margin-bottom: 25px;
+    padding: 20px;
+    background: var(--surface-light);
+    border-radius: 10px;
+}
+
+.limit-group label {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.limit-group input[type="range"] {
+    width: 100%;
+    margin-top: 15px;
+}
+
+.limit-group input[type="number"] {
+    width: 80px;
+    padding: 10px;
+    background: var(--background);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-align: center;
+    font-size: 18px;
+}
+
+.limits-preview {
+    margin: 30px 0;
+    padding: 20px;
+    background: var(--surface-light);
+    border-radius: 10px;
+}
+
+.preview-bar {
+    height: 40px;
+    background: var(--background);
+    border-radius: 20px;
+    position: relative;
+    margin-bottom: 10px;
+}
+
+.preview-range {
+    position: absolute;
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #10b981, #ef4444);
+    border-radius: 20px;
+    transition: all 0.3s ease;
+}
+
+.preview-min, .preview-max {
+    position: absolute;
+    top: -25px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.preview-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-secondary);
+}

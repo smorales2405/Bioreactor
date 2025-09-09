@@ -53,8 +53,12 @@ bool alarmActive = false;
 bool tempAlarm = false;
 bool phAlarm = false;
 bool emergencyAlarm = false;
-unsigned long lastAlarmCheck = 0;
-const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
+//unsigned long lastAlarmCheck = 0;
+//const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
+bool alarmSilenced = false;
+bool tempWasNormal = false;
+bool phWasNormal = false;
+bool alarmWasSilenced = false;
 
 // Variables de flujo
 volatile unsigned long pulseCount = 0;
@@ -655,6 +659,50 @@ void setupWebServer() {
     json += "\"turbidity\":" + String(turbidityMCmL, 0);
     json += "}";
     request->send(200, "application/json", json);
+  });
+
+  // Obtener límites de temperatura
+  server.on("/api/temp/load/limits", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"min\":" + String(tempLimitMin, 1) + ",";
+    json += "\"max\":" + String(tempLimitMax, 1);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Establecer límites de temperatura
+  server.on("/api/temp/save/limits", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          tempLimitMin = doc["min"];
+          tempLimitMax = doc["max"];
+          saveTemperatureLimits();
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Estado de alarmas mejorado
+  server.on("/api/alarm/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"active\":" + String(alarmActive ? "true" : "false") + ",";
+    json += "\"tempHigh\":" + String((temperature > tempLimitMax && tempAlarm) ? "true" : "false") + ",";
+    json += "\"tempLow\":" + String((temperature < tempLimitMin && tempAlarm) ? "true" : "false") + ",";
+    json += "\"phLow\":" + String(phAlarm ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Silenciar alarma temporalmente
+  server.on("/api/alarm/silence", HTTP_POST, [](AsyncWebServerRequest *request){
+    silenceAlarmTemporary();
+    request->send(200, "text/plain", "OK");
   });
 
   // Estado del control de pH
@@ -5092,33 +5140,62 @@ void displayTurbConfirmConcentration() {
   lcd.print(menuCursor == 1 ? "> NO" : "  NO");
 }
 
-void checkAlarms() {
-  // Solo verificar cada cierto intervalo
-  if (millis() - lastAlarmCheck < alarmCheckInterval) {
-    return;
-  }
-  lastAlarmCheck = millis();
+void silenceAlarmTemporary() {
+  alarmSilenced = true;
+  alarmWasSilenced = true;  // Marcar que fue silenciada manualmente
   
+  // Apagar buzzer y LED temporalmente
+  ledcWrite(BUZZER_PIN, 0);
+  pcfOutput.digitalWrite(P4, HIGH);
+  
+  Serial.println("Alarma silenciada manualmente");
+}
+
+void checkAlarms() {
   bool shouldActivateAlarm = false;
+  
+  // Verificar si los sensores están en condiciones normales actualmente
+  bool tempIsNormal = (temperature >= tempLimitMin && temperature <= tempLimitMax);
+  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitSet);
   
   // Verificar alarma de temperatura
   tempAlarm = false;
   if (temperature >= 10.0 && temperature <= 40.0) {
-    // Solo activar si está dentro del rango válido pero fuera de límites
     if (temperature < tempLimitMin || temperature > tempLimitMax) {
-      tempAlarm = true;
-      shouldActivateAlarm = true;
-      Serial.println("ALARMA: Temperatura fuera de límites");
+      // Solo activar si:
+      // 1. No fue silenciada, O
+      // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente
+      if (!alarmWasSilenced || (alarmWasSilenced && tempWasNormal)) {
+        tempAlarm = true;
+        shouldActivateAlarm = true;
+        Serial.println("ALARMA: Temperatura fuera de límites");
+      }
     }
   }
   
-  // Verificar alarma de pH (solo si el control está activo)
+  // Verificar alarma de pH
   phAlarm = false;
   if (!co2Active && !co2InjectionActive && phValue < phLimitSet) {
-    phAlarm = true;
-    shouldActivateAlarm = true;
-    Serial.println("ALARMA: pH bajo el límite fijado");
+    // Solo activar si:
+    // 1. No fue silenciada, O
+    // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente
+    if (!alarmWasSilenced || (alarmWasSilenced && phWasNormal)) {
+      phAlarm = true;
+      shouldActivateAlarm = true;
+      Serial.println("ALARMA: pH bajo el límite fijado");
+    }
   }
+  
+  // Si todos los sensores vuelven a normal, resetear el flag de silenciado
+  if (tempIsNormal && phIsNormal && alarmWasSilenced) {
+    alarmWasSilenced = false;
+    alarmSilenced = false;
+    Serial.println("Sensores en condiciones normales - Alarmas rearmadas");
+  }
+  
+  // Actualizar estados previos
+  tempWasNormal = tempIsNormal;
+  phWasNormal = phIsNormal;
   
   // La alarma de emergencia se maneja en handleEmergencyState()
   if (emergencyAlarm) {
@@ -5127,7 +5204,9 @@ void checkAlarms() {
   
   // Activar o desactivar alarmas según corresponda
   if (shouldActivateAlarm && !alarmActive) {
-    activateAlarm();
+    if (!alarmSilenced) {
+      activateAlarm();
+    }
   } else if (!shouldActivateAlarm && alarmActive && !emergencyAlarm) {
     deactivateAlarm();
   }

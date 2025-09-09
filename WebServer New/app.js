@@ -34,6 +34,17 @@ let co2Timer = null;
 // Configuración de actualización
 const UPDATE_INTERVAL = 2000; // 2 segundos
 
+// Variables para límites y alarmas
+let tempLimits = { min: 18, max: 28 };
+let alarmState = {
+    active: false,
+    tempHigh: false,
+    tempLow: false,
+    phLow: false,
+    silenced: false,
+    silenceTime: null
+};
+
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
     initCharts();
@@ -262,11 +273,268 @@ function updateConcGauge(conc) {
 function updateCharts() {
    tempChart.data.labels = sensorData.timestamps;
    tempChart.data.datasets[0].data = sensorData.temperature;
+
+    // Actualizar líneas de límites con la cantidad correcta de puntos
+    const limitDataPoints = sensorData.timestamps.length;
+    tempChart.data.datasets.forEach(dataset => {
+        if (dataset.label.includes('Límite')) {
+            const limitValue = dataset.label.includes('Mínimo') ? 
+                tempLimits.min : tempLimits.max;
+            dataset.data = Array(limitDataPoints).fill(limitValue);
+        }
+    });
+
    tempChart.update();
    
    phChart.data.labels = sensorData.timestamps;
    phChart.data.datasets[0].data = sensorData.ph;
    phChart.update();
+}
+
+// Función para mostrar modal de límites
+function showTempLimits() {
+    document.getElementById('tempLimitsModal').style.display = 'block';
+    updateTempLimitsPreview();
+}
+
+function closeTempLimitsModal() {
+    document.getElementById('tempLimitsModal').style.display = 'none';
+}
+
+// Ajustar límites de temperatura
+function adjustTempLimit(type, delta) {
+    const input = document.getElementById(type === 'min' ? 'tempMinInput' : 'tempMaxInput');
+    const slider = document.getElementById(type === 'min' ? 'tempMinSlider' : 'tempMaxSlider');
+    
+    let newValue = parseFloat(input.value) + delta;
+    newValue = Math.max(10, Math.min(30, newValue));
+    
+    // Validar que min < max
+    if (type === 'min') {
+        const maxValue = parseFloat(document.getElementById('tempMaxInput').value);
+        if (newValue >= maxValue) {
+            newValue = maxValue - 0.5;
+        }
+    } else {
+        const minValue = parseFloat(document.getElementById('tempMinInput').value);
+        if (newValue <= minValue) {
+            newValue = minValue + 0.5;
+        }
+    }
+    
+    input.value = newValue;
+    slider.value = newValue;
+    updateTempLimitsPreview();
+}
+
+// Sincronizar sliders
+document.addEventListener('DOMContentLoaded', function() {
+    const tempMinInput = document.getElementById('tempMinInput');
+    const tempMinSlider = document.getElementById('tempMinSlider');
+    const tempMaxInput = document.getElementById('tempMaxInput');
+    const tempMaxSlider = document.getElementById('tempMaxSlider');
+    
+    if (tempMinInput && tempMinSlider) {
+        tempMinInput.addEventListener('input', function() {
+            tempMinSlider.value = this.value;
+            updateTempLimitsPreview();
+        });
+        
+        tempMinSlider.addEventListener('input', function() {
+            tempMinInput.value = this.value;
+            updateTempLimitsPreview();
+        });
+    }
+    
+    if (tempMaxInput && tempMaxSlider) {
+        tempMaxInput.addEventListener('input', function() {
+            tempMaxSlider.value = this.value;
+            updateTempLimitsPreview();
+        });
+        
+        tempMaxSlider.addEventListener('input', function() {
+            tempMaxInput.value = this.value;
+            updateTempLimitsPreview();
+        });
+    }
+});
+
+// Actualizar vista previa
+function updateTempLimitsPreview() {
+    const min = parseFloat(document.getElementById('tempMinInput').value);
+    const max = parseFloat(document.getElementById('tempMaxInput').value);
+    
+    const range = document.getElementById('tempRangePreview');
+    const minLabel = document.getElementById('previewMin');
+    const maxLabel = document.getElementById('previewMax');
+    
+    const minPos = ((min - 10) / 20) * 100;
+    const maxPos = ((max - 10) / 20) * 100;
+    
+    range.style.left = minPos + '%';
+    range.style.width = (maxPos - minPos) + '%';
+    
+    minLabel.style.left = minPos + '%';
+    minLabel.textContent = min + '°C';
+    
+    maxLabel.style.left = maxPos + '%';
+    maxLabel.textContent = max + '°C';
+}
+
+// Guardar límites
+async function saveTempLimits() {
+    const min = parseFloat(document.getElementById('tempMinInput').value);
+    const max = parseFloat(document.getElementById('tempMaxInput').value);
+    
+    try {
+        await fetch(`/api/temp/save/limits`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ min: min, max: max })
+        });
+        
+        tempLimits.min = min;
+        tempLimits.max = max;
+        
+        // Actualizar display
+        document.getElementById('tempLimitMin').textContent = min.toFixed(1);
+        document.getElementById('tempLimitMax').textContent = max.toFixed(1);
+        
+        // Actualizar gráfico
+        updateChartLimits();
+        
+        closeTempLimitsModal();
+    } catch (error) {
+        console.error('Error guardando límites:', error);
+    }
+}
+
+// Obtener límites actuales
+async function getTempLimits() {
+    try {
+        const response = await fetch(`/api/temp/load/limits`);
+        const data = await response.json();
+        
+        tempLimits.min = data.min;
+        tempLimits.max = data.max;
+        
+        document.getElementById('tempLimitMin').textContent = data.min.toFixed(1);
+        document.getElementById('tempLimitMax').textContent = data.max.toFixed(1);
+        document.getElementById('tempMinInput').value = data.min;
+        document.getElementById('tempMaxInput').value = data.max;
+        document.getElementById('tempMinSlider').value = data.min;
+        document.getElementById('tempMaxSlider').value = data.max;
+        
+        updateChartLimits();
+    } catch (error) {
+        console.error('Error obteniendo límites:', error);
+    }
+}
+
+// Actualizar líneas de límites en el gráfico
+function updateChartLimits() {
+    if (tempChart) {
+        // Remover datasets anteriores de límites si existen
+        tempChart.data.datasets = tempChart.data.datasets.filter(ds => 
+            !ds.label.includes('Límite')
+        );
+        
+        // Agregar líneas de límites
+        tempChart.data.datasets.push({
+            label: 'Límite Mínimo',
+            data: Array(tempChart.data.labels.length).fill(tempLimits.min),
+            borderColor: '#3b82f6',
+            borderDash: [5, 5],
+            borderWidth: 2,
+            fill: false,
+            pointRadius: 0,
+            tension: 0
+        });
+        
+        tempChart.data.datasets.push({
+            label: 'Límite Máximo',
+            data: Array(tempChart.data.labels.length).fill(tempLimits.max),
+            borderColor: '#ef4444',
+            borderDash: [5, 5],
+            borderWidth: 2,
+            fill: false,
+            pointRadius: 0,
+            tension: 0
+        });
+        
+        tempChart.update();
+    }
+}
+
+// Verificar alarmas
+async function checkAlarmStatus() {
+    try {
+        const response = await fetch(`/api/alarm/status`);
+        const data = await response.json();
+        
+        // Si hay alarma y no está silenciada o ha pasado el tiempo de silencio
+        if (data.active && (!alarmState.silenced || 
+            (alarmState.silenceTime && Date.now() - alarmState.silenceTime > 60000))) {
+            
+            alarmState.active = true;
+            alarmState.tempHigh = data.tempHigh;
+            alarmState.tempLow = data.tempLow;
+            alarmState.phLow = data.phLow;
+            
+            showAlarmPanel();
+        } else if (!data.active) {
+            hideAlarmPanel();
+            alarmState.silenced = false;
+        }
+    } catch (error) {
+        console.error('Error verificando alarmas:', error);
+    }
+}
+
+// Mostrar panel de alarmas
+function showAlarmPanel() {
+    const panel = document.getElementById('alarmPanel');
+    const reasons = document.getElementById('alarmReasons');
+    
+    reasons.innerHTML = '';
+    
+    if (alarmState.tempHigh) {
+        reasons.innerHTML += '<div class="alarm-reason">⚠️ Temperatura Alta</div>';
+    }
+    if (alarmState.tempLow) {
+        reasons.innerHTML += '<div class="alarm-reason">⚠️ Temperatura Baja</div>';
+    }
+    if (alarmState.phLow) {
+        reasons.innerHTML += '<div class="alarm-reason">⚠️ pH Bajo</div>';
+    }
+    
+    panel.style.display = 'block';
+    panel.classList.add('active');
+}
+
+// Ocultar panel de alarmas
+function hideAlarmPanel() {
+    const panel = document.getElementById('alarmPanel');
+    panel.classList.remove('active');
+    setTimeout(() => {
+        panel.style.display = 'none';
+    }, 300);
+}
+
+// Silenciar alarma
+async function silenceAlarm() {
+    try {
+        await fetch(`/api/alarm/silence`, { method: 'POST' });
+        
+        alarmState.silenced = true;
+        alarmState.silenceTime = Date.now();
+        
+        hideAlarmPanel();
+    } catch (error) {
+        console.error('Error silenciando alarma:', error);
+    }
 }
 
 // Control de LEDs
@@ -1012,6 +1280,7 @@ function startDataUpdate() {
     updateAireacionStatus();
     updateFillingStatus();
     updatePhStatus();
+    getTempLimits();
 
     setInterval(() => {
         updateSensorData();
@@ -1020,5 +1289,7 @@ function startDataUpdate() {
         updateAireacionStatus();
         updateFillingStatus();
         updatePhStatus();
+        getTempLimits();
+        checkAlarmStatus();
     }, UPDATE_INTERVAL);
 }
