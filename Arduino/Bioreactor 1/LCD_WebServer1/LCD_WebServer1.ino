@@ -902,7 +902,6 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     }
   });
   
-  // Iniciar secuencia
   server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
     int startPos = path.indexOf("/sequence/") + 10;
@@ -911,6 +910,24 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
+      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
+      startSequence();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid sequence or not configured");
+    }
+  });
+
+  // Iniciar secuencia en bucle
+  server.on("/api/sequence/*/start/loop", HTTP_POST, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int startPos = path.indexOf("/sequence/") + 10;
+    int endPos = path.indexOf("/start");
+    int seqId = path.substring(startPos, endPos).toInt();
+    
+    if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
+      selectedSequence = seqId;
+      sequenceLoopMode = true;
       startSequence();
       request->send(200, "text/plain", "OK");
     } else {
@@ -936,6 +953,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       json += ",\"sequenceId\":" + String(selectedSequence);
       json += ",\"currentStep\":" + String(currentSequenceStep);
       json += ",\"totalSteps\":" + String(sequences[selectedSequence].stepCount);
+      
       
       // Calcular tiempo transcurrido
       DateTime now = rtc.now();

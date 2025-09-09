@@ -367,9 +367,16 @@ async function loadSequences() {
                <h4>Secuencia ${seq.id + 1}</h4>
                <div class="status">${seq.configured ? `${seq.steps} pasos` : 'No configurada'}</div>
                <div class="sequence-actions">
-                   ${seq.configured ? 
-                       `<button class="btn btn-primary" onclick="startSequenceModal(${seq.id})">Ejecutar</button>` : 
-                       ''}
+                    ${seq.configured ? 
+                        `<div class="sequence-buttons">
+                            <button class="btn btn-primary" onclick="startSequence(${seq.id}, false)" title="Ejecutar una sola vez">
+                                <span>▶</span> 1 vez
+                            </button>
+                            <button class="btn btn-success" onclick="startSequence(${seq.id}, true)" title="Ejecutar continuamente">
+                                <span>🔁</span> Bucle
+                            </button>
+                        </div>` : 
+                        ''}
                    <button class="btn btn-secondary" onclick="configureSequence(${seq.id})">Configurar</button>
                    ${seq.configured ? 
                        `<button class="btn btn-danger" onclick="deleteSequence(${seq.id})">Borrar</button>` : 
@@ -396,7 +403,8 @@ async function updateSequenceStatus() {
        
        if (data.running) {
            sequenceRunning = true;
-           statusText.innerHTML = `Ejecutando Secuencia ${data.sequenceId + 1} - Paso ${data.currentStep + 1}/${data.totalSteps} 
+           const modeText = data.loopMode ? ' (Bucle)' : ' (1 vez)';
+           statusText.innerHTML = `Ejecutando Secuencia ${data.sequenceId + 1} - Paso ${data.currentStep + 1}/${data.totalSteps} ${modeText}
                                   (${data.elapsedHours}h ${data.elapsedMinutes}m ${data.elapsedSeconds}s / 
                                    ${data.totalHours}h ${data.totalMinutes}m ${data.totalSeconds}s)`;
            stopBtn.style.display = 'inline-block';
@@ -410,31 +418,26 @@ async function updateSequenceStatus() {
    }
 }
 
-function startSequenceModal(id) {
-   const modal = document.createElement('div');
-   modal.className = 'modal';
-   modal.style.display = 'block';
-   modal.innerHTML = `
-       <div class="modal-content">
-           <span class="close" onclick="this.parentElement.parentElement.remove()">&times;</span>
-           <h2>Ejecutar Secuencia ${id + 1}</h2>
-           <div class="execution-mode">
-               <label>
-                   <input type="radio" name="mode" value="once" checked>
-                   Ejecutar una vez
-               </label>
-               <label>
-                   <input type="radio" name="mode" value="loop">
-                   Ejecutar en bucle
-               </label>
-           </div>
-           <div class="modal-buttons">
-               <button class="btn btn-primary" onclick="executeSequence(${id}, document.querySelector('input[name=mode]:checked').value); this.parentElement.parentElement.parentElement.remove()">Iniciar</button>
-               <button class="btn btn-secondary" onclick="this.parentElement.parentElement.parentElement.remove()">Cancelar</button>
-           </div>
-       </div>
-   `;
-   document.body.appendChild(modal);
+async function startSequence(id, loop = false) {
+    try {
+        // Detener cualquier secuencia en ejecución
+        await fetch('/api/sequence/stop', { method: 'POST' });
+        
+        // Iniciar la nueva secuencia
+        const endpoint = loop ? `/api/sequence/${id}/start/loop` : `/api/sequence/${id}/start`;
+        const response = await fetch(endpoint, { method: 'POST' });
+        
+        if (response.ok) {
+            alert(loop ? `Secuencia ${id + 1} iniciada en bucle` : `Secuencia ${id + 1} iniciada (1 vez)`);
+            // Actualizar el estado de la secuencia
+            updateSequenceStatus();
+        } else {
+            alert('Error al iniciar la secuencia');
+        }
+    } catch (error) {
+        console.error('Error iniciando secuencia:', error);
+        alert('Error de conexión');
+    }
 }
 
 async function executeSequence(id, mode) {
