@@ -326,25 +326,6 @@ void setup() {
     logInterval = 5000; // 5 minutos por defecto
   }
 
-  // Verificar y reanudar logging si estaba activo
-  for (int i = 0; i < 4; i++) {
-    // Leer flag de logging desde archivo de configuración
-    String configFile = "/config_tipo" + String(i + 1) + ".txt";
-    if (SD.exists(configFile)) {
-      File file = SD.open(configFile, FILE_READ);
-      if (file) {
-        String state = file.readStringUntil('\n');
-        if (state == "LOGGING") {
-          dataLogging[i] = true;
-          lastLogTime[i] = millis();
-          Serial.print("Reanudando logging Tipo ");
-          Serial.println(i + 1);
-        }
-        file.close();
-      }
-    }
-  }
-
   // Inicializar I2C y LCD
   Wire.begin();
   lcd.init();
@@ -389,6 +370,7 @@ void setup() {
     ledcWrite(ledPins[i], 0);
   }
   
+  //Buzzer
   ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
   ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
 
@@ -422,12 +404,12 @@ void setup() {
   ads.setGain(GAIN_TWOTHIRDS);
   if (!ads.begin()) {
     Serial.println("Error: No se detectó el ADS1115.");
-    //lcd.setCursor(10, 2);
-    //lcd.print("ADS Error!");
-  } //else {
-  //  lcd.setCursor(10, 2);
-  //  lcd.print("OK");
-  //}
+    lcd.setCursor(10, 2);
+    lcd.print("ADC Error!");
+  } else {
+    lcd.setCursor(10, 2);
+    lcd.print("ADC OK");
+  }
   
   //delay(15000);
 
@@ -443,6 +425,7 @@ void setup() {
     
     // Cargar secuencias desde SD
     loadAllSequences();
+    
   }
   
   // Inicializar secuencias en memoria
@@ -461,6 +444,25 @@ void setup() {
     }
   }
   
+  // Verificar y reanudar logging si estaba activo
+  for (int i = 0; i < 4; i++) {
+    // Leer flag de logging desde archivo de configuración
+    String configFile = "config_tipo" + String(i + 1) + ".txt";
+    if (SD.exists(configFile)) {
+      File file = SD.open(configFile, FILE_READ);
+      if (file) {
+        String state = file.readStringUntil('\n');
+        if (state == "LOGGING") {
+          dataLogging[i] = true;
+          lastLogTime[i] = millis();
+          Serial.print("Reanudando logging Tipo ");
+          Serial.println(i + 1);
+        }
+        file.close();
+      }
+    }
+  }
+
   delay(1000);
   
   loadSystemState();
@@ -473,7 +475,6 @@ void setup() {
   
   // Configurar servidor web
   setupWebServer();
-  
   // Iniciar servidor
   server.begin();
   
@@ -4500,15 +4501,17 @@ float getTurbidityConcentration() {
   }
   
   float voltage = getTurbidityVoltage();
-  if (!isfinite(voltage)) {            
-  return 0.0;
-  }
+
   float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
   
   if (concentration < 0) concentration = 0;
   if (concentration > 100) concentration = 100;
   
-  return concentration;
+  if (!isfinite(concentration)) {            
+    return 0.0;
+  } else {
+    return concentration;
+  }
 }
 
 void displayPhCalibrationMenu() {
@@ -4697,9 +4700,6 @@ float getPhValueCalibrated() {
   }
   
   float voltage = getPhVoltage();
-  if (!isfinite(voltage)) {            
-  return 0.0;
-  }
   
   float ph = phCoefM * voltage + phCoefB;
   
@@ -4707,7 +4707,11 @@ float getPhValueCalibrated() {
   if (ph < 0) ph = 0;
   if (ph > 14) ph = 14;
   
-  return ph;
+  if (!isfinite(ph)) {            
+    return 0.0;
+  } else {
+    return ph;
+  }
 }
 
 void displayAlmacenarMenu() {
