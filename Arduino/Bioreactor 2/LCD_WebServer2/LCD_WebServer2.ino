@@ -9,7 +9,6 @@
 #include <ArduinoJson.h>
 #include <Adafruit_MAX31865.h>
 #include <Adafruit_ADS1X15.h>
-#include <DFRobot_ESP_PH_WITH_ADC.h>
 #include <EEPROM.h>
 #include <PCF8574.h>
 
@@ -26,7 +25,6 @@ RTC_DS3231 rtc;
 // === Sensores ===
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
 Adafruit_ADS1115 ads;
-DFRobot_ESP_PH_WITH_ADC phSensor;
 
 #define RREF      430.0
 #define RNOMINAL  100.0
@@ -39,6 +37,8 @@ DFRobot_ESP_PH_WITH_ADC phSensor;
 // === Pin del Boton Emergencia ===
 #define EMERGENCY_PIN 39
 
+#define BUZZER_PIN 33  // Pin PWM para el buzzer
+
 // === Pin SQW del RTC ===
 #define SQW_PIN 17
 
@@ -47,6 +47,18 @@ DFRobot_ESP_PH_WITH_ADC phSensor;
 #define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
 #define K_FACTOR 7.5
 #define PULSOS_POR_LITRO (K_FACTOR * 60)
+
+// Variables para control de alarmas
+bool alarmActive = false;
+bool tempAlarm = false;
+bool phAlarm = false;
+bool emergencyAlarm = false;
+//unsigned long lastAlarmCheck = 0;
+//const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
+bool alarmSilenced = false;
+bool tempWasNormal = false;
+bool phWasNormal = false;
+bool alarmWasSilenced = false;
 
 // Variables de flujo
 volatile unsigned long pulseCount = 0;
@@ -123,6 +135,10 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_AIREACION 312         // 1 byte - estado aireación
 #define EEPROM_CO2 313               // 1 byte - estado CO2
 
+// Agregar direcciones EEPROM para límites de temperatura
+#define EEPROM_TEMP_MIN 170  // Float (4 bytes)
+#define EEPROM_TEMP_MAX 174  // Float (4 bytes)
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -143,8 +159,14 @@ int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
 // Variables para almacenamiento de datos
 bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
 unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
-unsigned long logInterval = 300000; // 5 minutos en milisegundos (configurable)
+unsigned long logInterval = 5000; // 5 segundos en milisegundos (configurable)
 int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
+
+// Variables para límites de temperatura
+float tempLimitMin = 18.0;  // Valor por defecto
+float tempLimitMax = 28.0;  // Valor por defecto
+float tempEditValue = 0.0;  // Valor temporal para edición
+bool editingMin = true;      // Flag para saber qué límite se está editando
 
 // Direcciones EEPROM para configuración de logging
 #define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
@@ -152,7 +174,11 @@ int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
 // === Estados del menú ===
 enum MenuState {
   MENU_MAIN,           
-  MENU_SENSORS,        
+  MENU_SENSORS,
+  MENU_TEMP_LIMITS,
+  MENU_TEMP_SET_MIN,
+  MENU_TEMP_SET_MAX,
+  MENU_TEMP_CONFIRM_SAVE,        
   MENU_SENSOR_PH,      
   MENU_PH_CALIBRATION_MENU,
   MENU_PH_SET_MUESTRA,
@@ -286,6 +312,7 @@ void setup() {
   
   // Inicializar EEPROM
   EEPROM.begin(512);
+  loadTemperatureLimits();
   loadTurbidityCalibration();
   loadPhCalibration(); 
 
@@ -296,7 +323,7 @@ void setup() {
   
   EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
   if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
-    logInterval = 300000; // 5 minutos por defecto
+    logInterval = 5000; // 5 minutos por defecto
   }
 
   // Verificar y reanudar logging si estaba activo
@@ -343,7 +370,7 @@ void setup() {
 
   // Configurar PCF8574
   pcfInput.pinMode(P0, INPUT);
-  pcfInput.pinMode(P1, INPUT);
+  pcfInput.pinMode(P1, INPUT_PULLUP);
   pcfInput.begin();
 
   pcfOutput.pinMode(P1, OUTPUT);  // Bomba de Agua
@@ -362,6 +389,9 @@ void setup() {
     ledcWrite(ledPins[i], 0);
   }
   
+  ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
+  ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
+
   // Inicializar RTC
   if (!rtc.begin()) {
     Serial.println("RTC no detectado!");
@@ -387,9 +417,6 @@ void setup() {
   
   // MAX31865
   thermo.begin(MAX31865_3WIRE);
-  
-  // pH Sensor
-  phSensor.begin();
   
   // ADS1115
   ads.setGain(GAIN_TWOTHIRDS);
@@ -473,6 +500,9 @@ void loop() {
   if (millis() - lastSensorRead > sensorReadInterval) {
     lastSensorRead = millis();
     readSensors();
+    // Verificar alarmas después de leer sensores
+    checkAlarms();
+
     
     // Actualizar display si estamos en el menú de sensores
     if (currentMenu == MENU_SENSORS) {
@@ -612,6 +642,14 @@ void setupWebServer() {
   server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
     request->send(SD, "/styles.css", "text/css");
   });
+
+  server.on("/chart.umd.min.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/chart.umd.min.js", "text/js");
+  });   
+
+  server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send(SD, "/app.js", "text/js");
+  });  
   
   // API para sensores
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -622,7 +660,148 @@ void setupWebServer() {
     json += "}";
     request->send(200, "application/json", json);
   });
-  
+
+  // Obtener límites de temperatura
+  server.on("/api/temp/load/limits", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"min\":" + String(tempLimitMin, 1) + ",";
+    json += "\"max\":" + String(tempLimitMax, 1);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Establecer límites de temperatura
+  server.on("/api/temp/save/limits", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          tempLimitMin = doc["min"];
+          tempLimitMax = doc["max"];
+          saveTemperatureLimits();
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Estado de alarmas mejorado
+  server.on("/api/alarm/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"active\":" + String(alarmActive ? "true" : "false") + ",";
+    json += "\"tempHigh\":" + String((temperature > tempLimitMax && tempAlarm) ? "true" : "false") + ",";
+    json += "\"tempLow\":" + String((temperature < tempLimitMin && tempAlarm) ? "true" : "false") + ",";
+    json += "\"phLow\":" + String(phAlarm ? "true" : "false");
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Silenciar alarma temporalmente
+  server.on("/api/alarm/silence", HTTP_POST, [](AsyncWebServerRequest *request){
+    silenceAlarmTemporary();
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Estado del control de pH
+  server.on("/api/ph/status", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"phValue\":" + String(phValue, 2) + ",";
+    json += "\"phLimit\":" + String(phLimitSet, 1) + ",";
+    json += "\"autoControl\":" + String(phControlActive ? "true" : "false") + ",";
+    json += "\"co2Active\":" + String(co2Active ? "true" : "false") + ",";
+    json += "\"co2InjectionActive\":" + String(co2InjectionActive ? "true" : "false") + ",";
+    json += "\"co2MinutesRemaining\":" + String(co2MinutesRemaining);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Activar control automático de pH
+  server.on("/api/ph/auto/set", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          phLimitSet = doc["limit"];
+          phControlActive = true;
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Desactivar control automático
+  server.on("/api/ph/auto/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    phControlActive = false;
+    if (co2Active && !co2InjectionActive) {
+      co2Active = false;
+      pcfOutput.digitalWrite(P3, HIGH);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Iniciar inyección manual de CO2
+  server.on("/api/co2/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          co2MinutesSet = doc["minutes"];
+          co2MinutesRemaining = co2MinutesSet;
+          co2InjectionActive = true;
+          co2StartTime = millis();
+          pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+          
+          // Si hay modo bucle, guardarlo
+          bool loopMode = doc["loop"] | false;
+          if (loopMode) {
+            // Aquí podrías implementar la lógica del bucle
+            // Por ahora solo guardamos el estado
+          }
+          
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+    });
+
+  // Pausar inyección de CO2
+  server.on("/api/co2/manual/pause", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (co2InjectionActive) {
+      co2InjectionActive = false;
+      pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+      // Guardar tiempo restante para poder reanudar
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Reiniciar inyección de CO2
+  server.on("/api/co2/manual/reset", HTTP_POST, [](AsyncWebServerRequest *request){
+    co2InjectionActive = false;
+    co2MinutesRemaining = 0;
+    co2MinutesSet = 0;
+    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Reanudar inyección pausada
+  server.on("/api/co2/manual/resume", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (co2MinutesRemaining > 0) {
+      co2InjectionActive = true;
+      co2StartTime = millis();
+      pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
 // Control de LEDs individuales - ON/OFF
 server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
   setLED(0, true, 100);
@@ -771,7 +950,6 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     }
   });
   
-  // Iniciar secuencia
   server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
     int startPos = path.indexOf("/sequence/") + 10;
@@ -780,6 +958,24 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
+      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
+      startSequence();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid sequence or not configured");
+    }
+  });
+
+  // Iniciar secuencia en bucle
+  server.on("/api/sequence/*/start/loop", HTTP_POST, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int startPos = path.indexOf("/sequence/") + 10;
+    int endPos = path.indexOf("/start");
+    int seqId = path.substring(startPos, endPos).toInt();
+    
+    if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
+      selectedSequence = seqId;
+      sequenceLoopMode = true;
       startSequence();
       request->send(200, "text/plain", "OK");
     } else {
@@ -805,6 +1001,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       json += ",\"sequenceId\":" + String(selectedSequence);
       json += ",\"currentStep\":" + String(currentSequenceStep);
       json += ",\"totalSteps\":" + String(sequences[selectedSequence].stepCount);
+      
       
       // Calcular tiempo transcurrido
       DateTime now = rtc.now();
@@ -1019,54 +1216,19 @@ void handleButtons() {
   }
   
   // Pulsador adicional
-  if (pcfInput.digitalRead(P1) == 0) {
-    if (millis() - lastExtraButtonPress > debounceDelay) {
-      lastExtraButtonPress = millis();
-      //handleExtraButton();
-    }
+  if (pcfInput.digitalRead(P1,true) == 0) {
+    //if (millis() - lastExtraButtonPress > debounceDelay) {
+    //  lastExtraButtonPress = millis();
+    //}
+    handleExtraButton();
   }
 }
 
-void handleExtraButton() {
-  switch (currentMenu) {
-    case MENU_SEQ_CONFIG_CANTIDAD:
-    case MENU_SEQ_CONFIG_COLOR:
-    case MENU_SEQ_CONFIG_TIME:
-    case MENU_SEQ_CONFIG_TIME_CONFIRM:  // Agregar este nuevo caso
-      currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-      
-    case MENU_SEQ_RUNNING:
-      currentMenu = MENU_SEQ_STOP_CONFIRM;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_PH_PANEL:
-      currentMenu = MENU_SENSOR_PH;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_SET_LIMIT:
-      phControlActive = false; // Desactivar control si se cancela
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 0;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2:
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
-      break;
-
-    case MENU_PH_MANUAL_CO2_ACTIVE:
-      stopCO2Injection();
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
+void handleExtraButton () {
+  switch (currentMenu) {   
+    case MENU_CO2:
+      currentMenu = MENU_MAIN;
+      menuCursor = 4;
       updateDisplay();
       break;
   }
@@ -1083,7 +1245,23 @@ void incrementCursor() {
       menuCursor++;
       if (menuCursor > 3) menuCursor = 0;
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      menuCursor++;
+      if (menuCursor > 3) menuCursor = 0; // 4 opciones
+      break;
+
+    case MENU_TEMP_SET_MIN:
+    case MENU_TEMP_SET_MAX:
+      if (tempEditValue < 30.0) {
+        tempEditValue += 0.5; // Incrementos de 0.5°C
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_SENSOR_PH:
       menuCursor++;
       if (menuCursor > 2) menuCursor = 0; // Fijar, Calibrar, Atrás
@@ -1290,7 +1468,23 @@ void decrementCursor() {
       menuCursor--;
       if (menuCursor < 0) menuCursor = 3;
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      menuCursor--;
+      if (menuCursor < 0) menuCursor = 3;
+      break;
+
+    case MENU_TEMP_SET_MIN:
+    case MENU_TEMP_SET_MAX:
+      if (tempEditValue > 10.0) {
+        tempEditValue -= 0.5; // Decrementos de 0.5°C
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      menuCursor = (menuCursor == 0) ? 1 : 0;
+      break;
+
     case MENU_SENSOR_PH:
       menuCursor--;
       if (menuCursor < 0) menuCursor = 2; // Ahora son 3 opciones: Fijar, Calibrar, Atrás
@@ -1515,7 +1709,9 @@ void handleSelection() {
       
     case MENU_SENSORS:
       if (menuCursor == 0) {
-        // Temperatura - no hace nada
+        // Temperatura - ir a fijar límites
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 0;
       } else if (menuCursor == 1) {
         // pH - entrar a submenú
         currentMenu = MENU_SENSOR_PH;
@@ -1530,7 +1726,78 @@ void handleSelection() {
         menuCursor = 0;
       }
       break;
-      
+
+    case MENU_TEMP_LIMITS:
+      if (menuCursor == 0) {
+        // Editar límite mínimo
+        editingMin = true;
+        tempEditValue = tempLimitMin;
+        currentMenu = MENU_TEMP_SET_MIN;
+      } else if (menuCursor == 1) {
+        // Editar límite máximo
+        editingMin = false;
+        tempEditValue = tempLimitMax;
+        currentMenu = MENU_TEMP_SET_MAX;
+      } else if (menuCursor == 2) {
+        // Guardar
+        currentMenu = MENU_TEMP_CONFIRM_SAVE;
+        menuCursor = 1; // Por defecto en NO
+      } else {
+        // Atrás
+        currentMenu = MENU_SENSORS;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_TEMP_SET_MIN:
+      // Validar que mínimo sea menor que máximo
+      if (tempEditValue >= tempLimitMax) {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Error: Min debe");
+        lcd.setCursor(0, 2);
+        lcd.print("ser menor que Max");
+        delay(2000);
+      } else {
+        tempLimitMin = tempEditValue;
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 0;
+      }
+      break;
+
+    case MENU_TEMP_SET_MAX:
+      // Validar que máximo sea mayor que mínimo
+      if (tempEditValue <= tempLimitMin) {
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Error: Max debe");
+        lcd.setCursor(0, 2);
+        lcd.print("ser mayor que Min");
+        delay(2000);
+      } else {
+        tempLimitMax = tempEditValue;
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 1;
+      }
+      break;
+
+    case MENU_TEMP_CONFIRM_SAVE:
+      if (menuCursor == 0) {
+        // SI - Guardar en EEPROM
+        saveTemperatureLimits();
+        lcd.clear();
+        lcd.setCursor(0, 1);
+        lcd.print("Limites guardados!");
+        delay(1500);
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 2;
+      } else {
+        // NO - Volver sin guardar
+        currentMenu = MENU_TEMP_LIMITS;
+        menuCursor = 2;
+      }
+      break;
+
     case MENU_SENSOR_PH:
       if (menuCursor == 0) {
         // Fijar - ir al panel de pH
@@ -1798,13 +2065,13 @@ void handleSelection() {
     case MENU_ONOFF:
       if (menuCursor == 0) {
         // ON - Cambiar estas líneas
-        //ledStates[selectedLed] = true;
-        //pwmValues[selectedLed] = 10;  // AGREGAR ESTA LÍNEA
+        ledStates[selectedLed] = true;
+        pwmValues[selectedLed] = 20;  // AGREGAR ESTA LÍNEA
         ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
       } else {
         // OFF
-        //ledStates[selectedLed] = false;
-        //pwmValues[selectedLed] = 0;
+        ledStates[selectedLed] = false;
+        pwmValues[selectedLed] = 0;
         ledcWrite(ledPins[selectedLed], 0);
       }
       currentMenu = MENU_ACTION;
@@ -1889,8 +2156,7 @@ void handleSelection() {
       
     case MENU_SEQ_CONFIG_COLOR:
       if (currentColorConfig < 4) {
-        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = (menuCursor + 1) / 2;
-        
+        sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = menuCursor*5;        
         currentColorConfig++;
         if (currentColorConfig < 4) {
           menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig];
@@ -2276,6 +2542,18 @@ void updateDisplay() {
     case MENU_SENSORS:
       displaySensorsMenu();
       break;
+    case MENU_TEMP_LIMITS:
+      displayTempLimitsMenu();
+      break;
+    case MENU_TEMP_SET_MIN:
+      displayTempSetLimit(true);
+      break;
+    case MENU_TEMP_SET_MAX:
+      displayTempSetLimit(false);
+      break;
+    case MENU_TEMP_CONFIRM_SAVE:
+      displayTempConfirmSave();
+      break;
     case MENU_SENSOR_PH:
       displaySensorPhMenu();
       break;
@@ -2525,12 +2803,27 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 0);
   lcd.print("SENSORES:");
   
-  // Temperatura
+  // Indicador de alarma activa
+  if (alarmActive) {
+    lcd.setCursor(12, 0);
+    lcd.print("[ALARMA]");
+  }
+
+  // Temperatura con alerta
   lcd.setCursor(0, 1);
   lcd.print(menuCursor == 0 ? "> " : "  ");
   lcd.print("Temp: ");
   lcd.print(temperature, 1);
   lcd.print(" C");
+  
+  // Mostrar alerta si está fuera de límites
+  if (temperature < tempLimitMin) {
+    lcd.setCursor(15, 1);
+    lcd.print("[BAJ]");
+  } else if (temperature > tempLimitMax) {
+    lcd.setCursor(15, 1);
+    lcd.print("[ALT]");
+  }
   
   // pH
   lcd.setCursor(0, 2);
@@ -2538,10 +2831,17 @@ void displaySensorsMenu() {
   lcd.print("pH: ");
   lcd.print(phValue, 2);
   
+  if (phAlarm) {
+  lcd.setCursor(14, 2);
+  lcd.print("[ALM]");
+  }
+
+  // Turbidez
   lcd.setCursor(0, 3);
   if (menuCursor < 3) {
-  lcd.print(menuCursor == 2 ? "> " : "  ");
-  lcd.print("Turb: ");
+    lcd.print(menuCursor == 2 ? "> " : "  ");
+    lcd.print("Turb: ");
+    float turbidityMCmL = getTurbidityConcentration();
     if (turbidityMCmL >= 0) {
       lcd.print(turbidityMCmL, 1);
       lcd.print(" MC/mL");
@@ -2551,6 +2851,103 @@ void displaySensorsMenu() {
   } else {
     lcd.print("> Atras");
   }
+}
+
+void displayTempLimitsMenu() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("LIMITES TEMP:");
+  
+  lcd.setCursor(0, 1);
+  lcd.print(menuCursor == 0 ? "> " : "  ");
+  lcd.print("Min: ");
+  lcd.print(tempLimitMin, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 2);
+  lcd.print(menuCursor == 1 ? "> " : "  ");
+  lcd.print("Max: ");
+  lcd.print(tempLimitMax, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 3);
+  if (menuCursor == 2) {
+    lcd.print("> Guardar");
+  } else if (menuCursor == 3) {
+    lcd.print("> Atras");
+  } else {
+    lcd.print("  ");
+    if (menuCursor < 2) {
+      lcd.print("Guardar");
+    }
+  }
+  
+  // Mostrar temperatura actual
+  lcd.setCursor(14, 0);
+  lcd.print("(");
+  lcd.print(temperature, 1);
+  lcd.print(")");
+}
+
+void displayTempSetLimit(bool isMin) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(isMin ? "FIJAR TEMP MIN:" : "FIJAR TEMP MAX:");
+  
+  // Mostrar valor actual siendo editado
+  lcd.setCursor(0, 1);
+  lcd.print("Valor: ");
+  lcd.print(tempEditValue, 1);
+  lcd.print(" C");
+  
+  // Mostrar barra visual
+  lcd.setCursor(0, 2);
+  lcd.print("[");
+  int barPos = map(tempEditValue * 10, 100, 300, 0, 16);
+  for (int i = 0; i < 16; i++) {
+    if (i == barPos) {
+      lcd.print("|");
+    } else if (i == 8) { // Marca en 20°C
+      lcd.print("-");
+    } else {
+      lcd.print(" ");
+    }
+  }
+  lcd.print("]");
+  
+  // Mostrar rango
+  lcd.setCursor(0, 3);
+  lcd.print("Rango: 10-30 C");
+  
+  // Mostrar límite opuesto como referencia
+  lcd.setCursor(15, 3);
+  if (isMin) {
+    lcd.print("M:");
+    lcd.print((int)tempLimitMax);
+  } else {
+    lcd.print("m:");
+    lcd.print((int)tempLimitMin);
+  }
+}
+
+void displayTempConfirmSave() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("GUARDAR LIMITES?");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Min: ");
+  lcd.print(tempLimitMin, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 2);
+  lcd.print("Max: ");
+  lcd.print(tempLimitMax, 1);
+  lcd.print(" C");
+  
+  lcd.setCursor(0, 3);
+  lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
+  lcd.print(menuCursor == 1 ? "> NO" : "  NO");
 }
 
 void displayWebServerMenu() {
@@ -3081,7 +3478,7 @@ void updateColorPreview() {
     if (i == currentColorConfig) {
       intensity = menuCursor*5;
     } else {
-      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i]*10;
+      intensity = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[i];
     }
     
     int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -3150,10 +3547,10 @@ void stopSequence() {
 void applySequenceStep(int step) {
   for (int i = 0; i < 4; i++) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
-    int pwmValue = map(intensity, 0, 10, 0, 255);
+    int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
     ledStates[i] = intensity > 0;
-    pwmValues[i] = intensity;
+    pwmValues[i] = intensity/5;
     
     if (intensity > 0) {
       Serial.print(ledNames[i]);
@@ -3186,6 +3583,7 @@ void checkSequenceProgress() {
     
     if (currentSequenceStep >= sequences[selectedSequence].stepCount) {
       if (sequenceLoopMode) {
+        delay(50);
         // Reiniciar secuencia
         currentSequenceStep = 0;
         stepStartTime = now;
@@ -3203,6 +3601,41 @@ void checkSequenceProgress() {
     
     updateDisplay();
   }
+}
+
+void saveTemperatureLimits() {
+  EEPROM.put(EEPROM_TEMP_MIN, tempLimitMin);
+  EEPROM.put(EEPROM_TEMP_MAX, tempLimitMax);
+  EEPROM.commit();
+  
+  Serial.print("Límites temperatura guardados - Min: ");
+  Serial.print(tempLimitMin);
+  Serial.print(" Max: ");
+  Serial.println(tempLimitMax);
+}
+
+void loadTemperatureLimits() {
+  EEPROM.get(EEPROM_TEMP_MIN, tempLimitMin);
+  EEPROM.get(EEPROM_TEMP_MAX, tempLimitMax);
+  
+  // Validar valores leídos
+  if (isnan(tempLimitMin) || tempLimitMin < 10.0 || tempLimitMin > 30.0) {
+    tempLimitMin = 18.0; // Valor por defecto
+  }
+  if (isnan(tempLimitMax) || tempLimitMax < 10.0 || tempLimitMax > 30.0) {
+    tempLimitMax = 28.0; // Valor por defecto
+  }
+  
+  // Asegurar que min < max
+  if (tempLimitMin >= tempLimitMax) {
+    tempLimitMin = 18.0;
+    tempLimitMax = 28.0;
+  }
+  
+  Serial.print("Límites temperatura cargados - Min: ");
+  Serial.print(tempLimitMin);
+  Serial.print(" Max: ");
+  Serial.println(tempLimitMax);
 }
 
 void saveSequence(int seqIndex) {
@@ -3763,7 +4196,10 @@ void startCO2Injection() {
 void stopCO2Injection() {
   co2InjectionActive = false;
   co2MinutesRemaining = 0;
-  pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+  if (!phControlActive || phValue <= phLimitSet) {
+    co2Active = false;
+    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+  }
 }
 
 void updateCO2Time() {
@@ -3773,26 +4209,35 @@ void updateCO2Time() {
     
     if (co2MinutesRemaining <= 0) {
       stopCO2Injection();
-      currentMenu = MENU_PH_PANEL;
-      menuCursor = 1;
-      updateDisplay();
+      if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE) {
+        currentMenu = MENU_PH_PANEL;
+        menuCursor = 1;
+        updateDisplay();
+      }
     }
   }
 }
 
 void checkPhControl() {
   if (phControlActive) {
+    // Usar histéresis para evitar oscilaciones
+    static bool co2WasActive = false;
+    
     if (phValue > phLimitSet + 0.2) {
       // pH alcalino - activar CO2
-      if (!co2Active) {
+      if (!co2Active && !co2InjectionActive) {
         co2Active = true;
+        co2WasActive = true;
         pcfOutput.digitalWrite(P3, LOW);
+        Serial.println("pH alto - Activando CO2");
       }
-    } else if (phValue <= phLimitSet) {
-      // pH en rango - desactivar CO2
-      if (co2Active) {
+    } else if (phValue <= phLimitSet - 0.1) {
+      // pH en rango o ácido - desactivar CO2
+      if (co2Active && co2WasActive && !co2InjectionActive) {
         co2Active = false;
+        co2WasActive = false;
         pcfOutput.digitalWrite(P3, HIGH);
+        Serial.println("pH en rango - Desactivando CO2");
       }
     }
   }
@@ -4325,8 +4770,8 @@ void displayAlmacenarConfirmStart() {
   
   lcd.setCursor(0, 2);
   lcd.print("Intervalo: ");
-  lcd.print(logInterval / 60000);
-  lcd.print(" min");
+  lcd.print(logInterval / 1000);
+  lcd.print(" seg");
   
   lcd.setCursor(0, 3);
   lcd.print(menuCursor == 0 ? "> SI    " : "  SI    ");
@@ -4695,7 +5140,101 @@ void displayTurbConfirmConcentration() {
   lcd.print(menuCursor == 1 ? "> NO" : "  NO");
 }
 
+void silenceAlarmTemporary() {
+  alarmSilenced = true;
+  alarmWasSilenced = true;  // Marcar que fue silenciada manualmente
+  
+  // Apagar buzzer y LED temporalmente
+  ledcWrite(BUZZER_PIN, 0);
+  pcfOutput.digitalWrite(P4, HIGH);
+  
+  Serial.println("Alarma silenciada manualmente");
+}
 
+void checkAlarms() {
+  bool shouldActivateAlarm = false;
+  
+  // Verificar si los sensores están en condiciones normales actualmente
+  bool tempIsNormal = (temperature >= tempLimitMin && temperature <= tempLimitMax);
+  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitSet);
+  
+  // Verificar alarma de temperatura
+  tempAlarm = false;
+  if (temperature >= 10.0 && temperature <= 40.0) {
+    if (temperature < tempLimitMin || temperature > tempLimitMax) {
+      // Solo activar si:
+      // 1. No fue silenciada, O
+      // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente
+      if (!alarmWasSilenced || (alarmWasSilenced && tempWasNormal)) {
+        tempAlarm = true;
+        shouldActivateAlarm = true;
+        Serial.println("ALARMA: Temperatura fuera de límites");
+      }
+    }
+  }
+  
+  // Verificar alarma de pH
+  phAlarm = false;
+  if (!co2Active && !co2InjectionActive && phValue < phLimitSet) {
+    // Solo activar si:
+    // 1. No fue silenciada, O
+    // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente
+    if (!alarmWasSilenced || (alarmWasSilenced && phWasNormal)) {
+      phAlarm = true;
+      shouldActivateAlarm = true;
+      Serial.println("ALARMA: pH bajo el límite fijado");
+    }
+  }
+  
+  // Si todos los sensores vuelven a normal, resetear el flag de silenciado
+  if (tempIsNormal && phIsNormal && alarmWasSilenced) {
+    alarmWasSilenced = false;
+    alarmSilenced = false;
+    Serial.println("Sensores en condiciones normales - Alarmas rearmadas");
+  }
+  
+  // Actualizar estados previos
+  tempWasNormal = tempIsNormal;
+  phWasNormal = phIsNormal;
+  
+  // La alarma de emergencia se maneja en handleEmergencyState()
+  if (emergencyAlarm) {
+    shouldActivateAlarm = true;
+  }
+  
+  // Activar o desactivar alarmas según corresponda
+  if (shouldActivateAlarm && !alarmActive) {
+    if (!alarmSilenced) {
+      activateAlarm();
+    }
+  } else if (!shouldActivateAlarm && alarmActive && !emergencyAlarm) {
+    deactivateAlarm();
+  }
+}
+
+void activateAlarm() {
+  alarmActive = true;
+  
+  // Activar buzzer al 100%
+  ledcWrite(BUZZER_PIN, 255); // 100% PWM
+  
+  // Activar LED rojo de alarma
+  pcfOutput.digitalWrite(P4, LOW); // LOW = encendido (verificar lógica)
+  
+  Serial.println("*** ALARMA ACTIVADA ***");
+}
+
+void deactivateAlarm() {
+  alarmActive = false;
+  
+  // Desactivar buzzer
+  ledcWrite(BUZZER_PIN, 0);
+  
+  // Desactivar LED de alarma
+  pcfOutput.digitalWrite(P4, HIGH); // HIGH = apagado (verificar lógica)
+  
+  Serial.println("Alarma desactivada");
+}
 
 void handleEmergencyState() {
   static bool lastEmergencyState = false;
@@ -4704,7 +5243,11 @@ void handleEmergencyState() {
   // Detectar cuando se presiona el botón (transición de LOW a HIGH)
   if (currentEmergencyState && !lastEmergencyState) {
     emergencyActive = true;
-    
+    emergencyAlarm = true;
+
+    // Activar alarma de emergencia inmediatamente
+    activateAlarm();
+
     // Apagar todas las salidas
     for (int i = 0; i < 4; i++) {
       pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
@@ -4736,7 +5279,11 @@ void handleEmergencyState() {
   // Detectar cuando se suelta el botón (transición de HIGH a LOW)
   else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
     emergencyActive = false;
+    emergencyAlarm = false;
     
+    // Desactivar alarma de emergencia
+    deactivateAlarm();
+
     // Volver al menú principal
     currentMenu = MENU_MAIN;
     menuCursor = 0;
