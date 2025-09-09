@@ -131,6 +131,10 @@ function initCharts() {
        },
        scales: {
            x: {
+               title: {
+                display: true,
+                text: 'Tiempo'
+                },
                grid: {
                    color: 'rgba(255, 255, 255, 0.1)'
                },
@@ -139,6 +143,7 @@ function initCharts() {
                }
            },
            y: {
+               beginAtZero: true,
                grid: {
                    color: 'rgba(255, 255, 255, 0.1)'
                },
@@ -170,7 +175,11 @@ function initCharts() {
                y: {
                    ...commonOptions.scales.y,
                    min: 0,
-                   max: 50
+                   max: 50,
+                   title: {
+                        display: true,
+                        text: 'Temperatura (°C)'
+                    }
                }
            }
        }
@@ -197,7 +206,11 @@ function initCharts() {
                y: {
                    ...commonOptions.scales.y,
                    min: 0,
-                   max: 14
+                   max: 14,
+                    title: {
+                    display: true,
+                    text: 'pH'
+                    }
                }
            }
        }

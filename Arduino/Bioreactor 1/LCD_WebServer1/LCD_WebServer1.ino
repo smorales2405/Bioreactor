@@ -1217,9 +1217,9 @@ void handleButtons() {
   
   // Pulsador adicional
   if (pcfInput.digitalRead(P1,true) == 0) {
-    //if (millis() - lastExtraButtonPress > debounceDelay) {
-    //  lastExtraButtonPress = millis();
-    //}
+    if (millis() - lastExtraButtonPress > debounceDelay) {
+      lastExtraButtonPress = millis();
+    }
     handleExtraButton();
   }
 }
@@ -2841,8 +2841,7 @@ void displaySensorsMenu() {
   if (menuCursor < 3) {
     lcd.print(menuCursor == 2 ? "> " : "  ");
     lcd.print("Turb: ");
-    float turbidityMCmL = getTurbidityConcentration();
-    if (turbidityMCmL >= 0) {
+    if (turbidityMCmL > 0.0) {
       lcd.print(turbidityMCmL, 1);
       lcd.print(" MC/mL");
     } else {
@@ -4497,10 +4496,13 @@ void performTurbidityCalibration() {
 float getTurbidityConcentration() {
   // Si no hay calibración, retornar -1
   if (turbCoefA == 0 && turbCoefB == 0 && turbCoefC == 0) {
-    return -1;
+    return 0.0;
   }
   
   float voltage = getTurbidityVoltage();
+  if (!isfinite(voltage)) {            
+  return 0.0;
+  }
   float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
   
   if (concentration < 0) concentration = 0;
@@ -4695,6 +4697,10 @@ float getPhValueCalibrated() {
   }
   
   float voltage = getPhVoltage();
+  if (!isfinite(voltage)) {            
+  return 0.0;
+  }
+  
   float ph = phCoefM * voltage + phCoefB;
   
   // Limitar el rango de pH entre 0 y 14
