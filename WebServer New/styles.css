@@ -1394,3 +1394,20 @@ h1 {
     padding: 5px 0;
     color: #ecf0f1;
 }
+
+.co2-config-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .co2-config-row {
+    grid-template-columns: 1fr; /* una debajo de la otra en móvil */
+  }
+}
+
+/* Asegura que el “0/0” no se separe ni haga salto de línea */
+.status-item .no-wrap {
+  white-space: nowrap;
+}
