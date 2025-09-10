@@ -345,7 +345,7 @@ void setup() {
   pinMode(ENCODER_SW, INPUT_PULLUP);
   pinMode(SQW_PIN, INPUT_PULLUP);
   pinMode(FLOW_SENSOR_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), contarPulso, FALLING);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), contarPulso, RISING);
   pinMode(EMERGENCY_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(EMERGENCY_PIN), handleEmergency, RISING);
 
