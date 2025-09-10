@@ -332,8 +332,7 @@ void setup() {
   loadTemperatureLimits();
   loadTurbidityCalibration();
   loadPhCalibration(); 
-  loadCO2FromEEPROM();
-
+  
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
   volumeTotal = 0.0;
@@ -611,6 +610,9 @@ void loadSystemState() {
     pcfOutput.digitalWrite(P3, LOW);
     Serial.println("CO2 reactivado tras reinicio");
   }
+
+  loadCO2FromEEPROM();
+
 }
 
 void setupWiFi() {
