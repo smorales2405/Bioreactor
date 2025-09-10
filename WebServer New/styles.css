@@ -244,6 +244,11 @@ h1 {
     gap: 20px;
 }
 
+.chart-card canvas {
+  height: 360px !important;   /* ajusta 220–320px a gusto */
+  width: 100% !important;
+}
+
 .chart-card {
     background: var(--surface);
     padding: 20px;
