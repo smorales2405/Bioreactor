@@ -13,7 +13,7 @@
 #include <PCF8574.h>
 
 // === Configuración WiFi ===
-const char* ap_ssid = "ESP32-Bioreactor2";
+const char* ap_ssid = "Bioreactor2";
 const char* ap_password = "bioreactor2";
 
 // === LCD 20x4 ===
@@ -4646,14 +4646,17 @@ float getTurbidityConcentration() {
   }
   
   float voltage = getTurbidityVoltage();
-  if (!isfinite(voltage)) return 0.0;
 
   float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
   
   if (concentration < 0) concentration = 0;
   if (concentration > 100) concentration = 100;
 
-  return concentration;
+  if (!isfinite(concentration)) {            
+    return 0.0;
+  } else {
+    return concentration;
+  }
 
 }
 
@@ -4843,7 +4846,6 @@ float getPhValueCalibrated() {
   }
   
   float voltage = getPhVoltage();
-  if (!isfinite(voltage)) return 0.0;
 
   float ph = phCoefM * voltage + phCoefB;
   
@@ -4851,7 +4853,11 @@ float getPhValueCalibrated() {
   if (ph < 0) ph = 0;
   if (ph > 14) ph = 14;
   
-  return ph;
+  if (!isfinite(ph)) {            
+    return 0.0;
+  } else {
+    return ph;
+  }
 
 }
 
