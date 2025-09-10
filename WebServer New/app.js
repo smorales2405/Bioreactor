@@ -1386,7 +1386,6 @@ function startDataUpdate() {
         updateAireacionStatus();
         updateFillingStatus();
         updatePhStatus();
-        getTempLimits();
         checkAlarmStatus();
     }, UPDATE_INTERVAL);
 }
