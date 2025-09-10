@@ -543,6 +543,54 @@ function hideAlarmPanel() {
     }, 300);
 }
 
+// Cargar historial de alarmas
+async function loadAlarmHistory() {
+    try {
+        const response = await fetch('/api/alarms/history');
+        const alarms = await response.json();
+        
+        const tbody = document.getElementById('alarm-history-body');
+        tbody.innerHTML = '';
+        
+        // Mostrar las alarmas más recientes primero
+        alarms.reverse().forEach(alarm => {
+            const row = tbody.insertRow();
+            row.insertCell(0).textContent = alarm.timestamp;
+            row.insertCell(1).textContent = alarm.type;
+            row.insertCell(2).textContent = alarm.value.toFixed(2);
+        });
+        
+        if (alarms.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">No hay alarmas registradas</td></tr>';
+        }
+    } catch (error) {
+        console.error('Error cargando historial:', error);
+    }
+}
+
+// Actualizar estado de alarma
+async function updateAlarmStatus() {
+    try {
+        const response = await fetch('/api/alarm/status');
+        const status = await response.json();
+        
+        const statusDiv = document.getElementById('alarm-status');
+        const silenceBtn = document.getElementById('silence-alarm-btn');
+        
+        if (status.active) {
+            statusDiv.className = 'alarm-status active';
+            statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ALARMA ACTIVA';
+            silenceBtn.disabled = false;
+        } else {
+            statusDiv.className = 'alarm-status inactive';
+            statusDiv.innerHTML = '<i class="fas fa-check-circle"></i> Sin alarmas activas';
+            silenceBtn.disabled = true;
+        }
+    } catch (error) {
+        console.error('Error actualizando estado:', error);
+    }
+}
+
 // Silenciar alarma
 async function silenceAlarm() {
     try {
@@ -550,12 +598,56 @@ async function silenceAlarm() {
         
         alarmState.silenced = true;
         alarmState.silenceTime = Date.now();
-        
+        updateAlarmStatus();
+        showNotification('Alarma silenciada', 'success');
+
         hideAlarmPanel();
     } catch (error) {
         console.error('Error silenciando alarma:', error);
+        showNotification('Error al silenciar alarma', 'error');
     }
 }
+
+// Borrar historial de alarmas
+async function clearAlarmHistory() {
+    if (confirm('¿Está seguro de borrar todo el historial de alarmas?')) {
+        try {
+            await fetch('/api/alarms/clear', { method: 'POST' });
+            loadAlarmHistory();
+            showNotification('Historial borrado', 'success');
+        } catch (error) {
+            console.error('Error borrando historial:', error);
+            showNotification('Error al borrar historial', 'error');
+        }
+    }
+}
+
+function showNotification(message, type) {
+    // Implementación simple de notificación
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.textContent = message;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        background: ${type === 'success' ? '#44ff44' : '#ff4444'};
+        color: white;
+        border-radius: 5px;
+        z-index: 1000;
+    `;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 3000);
+}
+
+// Actualizar estado de alarma periódicamente cuando se está en esa sección
+setInterval(() => {
+    const alarms = document.getElementById('alarms-section');
+    if (alarms && alarms.classList.contains('active')) {
+        updateAlarmStatus();
+    }
+}, 2000);
 
 // Control de LEDs
 async function updateLed(color, value) {

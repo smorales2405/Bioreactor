@@ -30,6 +30,9 @@
             <button class="nav-btn" onclick="showSection('llenado')">
                 💧 Llenado
             </button>
+            <button class="nav-btn" onclick="showSection('alarms-section'); loadAlarmHistory(); updateAlarmStatus();">
+            🔔 Alarmas
+            </button>
         </nav>
 
         <!-- Sección Sensores -->
@@ -451,6 +454,42 @@
                     </div>
                 </div>
             </div>
+        </section>
+
+        <!-- Sección de Alarmas -->
+        <section id="alarms-section" class="section">
+            <h2>Sistema de Alarmas</h2>
+                
+            <!-- Estado actual y botón silenciar -->
+            <div class="alarm-controls">
+                <div id="alarm-status" class="alarm-status">
+                    <!-- Estado se actualiza dinámicamente -->
+                </div>
+                <button id="silence-alarm-btn" class="btn btn-off btn-compact"  id="btnSilence" onclick="silenceAlarm()">Silenciar Alarma</button>
+            </div>
+            
+            <!-- Historial de alarmas -->
+            <div class="alarm-history">
+                <div class="history-header">
+                    <h3>Historial de Alarmas</h3>
+                    <button class="btn btn-off btn-compact" id="btnClear" onclick="clearAlarmHistory()">Borrar Historial</button>
+                </div>
+                
+                <div class="table-container">
+                    <table id="alarm-history-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha/Hora</th>
+                                <th>Tipo de Alarma</th>
+                                <th>Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alarm-history-body">
+                            <!-- Se llena dinámicamente -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>            
         </section>
     </div>
 

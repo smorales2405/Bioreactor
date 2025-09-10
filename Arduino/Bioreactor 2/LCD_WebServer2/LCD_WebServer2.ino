@@ -60,6 +60,14 @@ bool tempWasNormal = false;
 bool phWasNormal = false;
 bool alarmWasSilenced = false;
 
+#define MAX_ALARM_HISTORY 100
+#define ALARM_LOG_FILE "/alarm_log.txt"
+struct AlarmRecord {
+  char timestamp[20];
+  char type[30];
+  float value;
+};
+
 // Variables de flujo
 volatile unsigned long pulseCount = 0;
 float volumeTotal = 0.0;
@@ -721,6 +729,46 @@ void setupWebServer() {
     json += "\"phLow\":" + String(phAlarm ? "true" : "false");
     json += "}";
     request->send(200, "application/json", json);
+  });
+
+  // Obtener historial de alarmas
+  server.on("/api/alarms/history", HTTP_GET, [](AsyncWebServerRequest *request){
+    File alarmFile = SD.open(ALARM_LOG_FILE, FILE_READ);
+    String json = "[";
+    
+    if (alarmFile) {
+      boolean first = true;
+      while (alarmFile.available()) {
+        String line = alarmFile.readStringUntil('\n');
+        if (line.length() > 0) {
+          int firstComma = line.indexOf(',');
+          int secondComma = line.indexOf(',', firstComma + 1);
+          
+          if (firstComma > 0 && secondComma > 0) {
+            if (!first) json += ",";
+            json += "{";
+            json += "\"timestamp\":\"" + line.substring(0, firstComma) + "\",";
+            json += "\"type\":\"" + line.substring(firstComma + 1, secondComma) + "\",";
+            json += "\"value\":" + line.substring(secondComma + 1);
+            json += "}";
+            first = false;
+          }
+        }
+      }
+      alarmFile.close();
+    }
+    json += "]";
+    request->send(200, "application/json", json);
+  });
+
+  // Borrar historial de alarmas
+  server.on("/api/alarms/clear", HTTP_POST, [](AsyncWebServerRequest *request){
+    SD.remove(ALARM_LOG_FILE);
+    File alarmFile = SD.open(ALARM_LOG_FILE, FILE_WRITE);
+    if (alarmFile) {
+      alarmFile.close();
+    }
+    request->send(200, "text/plain", "OK");
   });
 
   // Silenciar alarma temporalmente
@@ -5325,6 +5373,12 @@ void checkAlarms() {
       if (!alarmWasSilenced || (alarmWasSilenced && tempWasNormal)) {
         tempAlarm = true;
         shouldActivateAlarm = true;
+        // Agregar registro de alarma
+        if (temperature < tempLimitMin) {
+          logAlarmToSD("Temperatura Baja", temperature);
+        } else {
+          logAlarmToSD("Temperatura Alta", temperature);
+        }
         Serial.println("ALARMA: Temperatura fuera de límites");
       }
     }
@@ -5339,6 +5393,8 @@ void checkAlarms() {
     if (!alarmWasSilenced || (alarmWasSilenced && phWasNormal)) {
       phAlarm = true;
       shouldActivateAlarm = true;
+      // Agregar registro de alarma
+      logAlarmToSD("pH Bajo", phValue);
       Serial.println("ALARMA: pH bajo el límite fijado");
     }
   }
@@ -5391,6 +5447,42 @@ void deactivateAlarm() {
   pcfOutput.digitalWrite(P4, HIGH); // HIGH = apagado (verificar lógica)
   
   Serial.println("Alarma desactivada");
+}
+
+void logAlarmToSD(const char* alarmType, float value) {
+  File alarmFile = SD.open(ALARM_LOG_FILE, FILE_APPEND);
+  if (alarmFile) {
+    // Obtener fecha y hora
+    DateTime now = rtc.now();
+    
+    // Escribir fecha
+    alarmFile.print(now.year());
+    alarmFile.print("/");
+    if (now.month() < 10) alarmFile.print("0");
+    alarmFile.print(now.month());
+    alarmFile.print("/");
+    if (now.day() < 10) alarmFile.print("0");
+    alarmFile.print(now.day());
+    alarmFile.print(";");
+    
+    // Escribir hora
+    if (now.hour() < 10) alarmFile.print("0");
+    alarmFile.print(now.hour());
+    alarmFile.print(":");
+    if (now.minute() < 10) alarmFile.print("0");
+    alarmFile.print(now.minute());
+    alarmFile.print(":");
+    if (now.second() < 10) alarmFile.print("0");
+    alarmFile.print(now.second());
+    alarmFile.print(",");
+    alarmFile.print(alarmType);
+    alarmFile.print(",");
+    alarmFile.println(value);
+    alarmFile.close();
+    
+    Serial.print("Alarma registrada: ");
+    Serial.println(alarmType);
+  }
 }
 
 void handleEmergencyState() {

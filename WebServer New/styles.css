@@ -1411,3 +1411,92 @@ h1 {
 .status-item .no-wrap {
   white-space: nowrap;
 }
+
+/* Estilos para el sistema de alarmas */
+.alarm-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 15px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+
+.alarm-status {
+    font-size: 1.1em;
+    padding: 10px;
+}
+
+.alarm-status.active {
+    color: #ff4444;
+    font-weight: bold;
+    animation: pulse 1s infinite;
+}
+
+.alarm-status.inactive {
+    color: #44ff44;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.alarm-history {
+    margin-top: 30px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.table-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.3);
+}
+
+#alarm-history-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#alarm-history-table th {
+    background: rgba(0, 123, 255, 0.2);
+    padding: 12px;
+    text-align: left;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+#alarm-history-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#alarm-history-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.control-btn.danger {
+    background: linear-gradient(45deg, #ff4444, #cc0000);
+}
+
+.control-btn.danger:hover {
+    background: linear-gradient(45deg, #ff6666, #ff0000);
+}
+
+.btn-compact {
+  flex: 0 0 auto;
+  min-width: 180px;    /* ajusta a gusto: 140–220px */
+  padding: 8px 16px;   /* más pequeño que el .btn normal */
+  font-size: 14px;
+  border-radius: 8px;
+}
