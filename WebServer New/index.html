@@ -287,22 +287,32 @@
                             </div>
                         </div>
                         
-                        <!-- Modo programado -->
-                        <div class="programmed-mode">
-                            <label>
-                                <input type="checkbox" id="co2LoopMode">
-                                Modo Bucle (Repetir automáticamente)
-                            </label>
-                            <div id="loopConfig" style="display:none;">
-                                <label>Repetir cada (horas):</label>
-                                <input type="number" id="loopInterval" min="1" max="24" value="4">
+                        <!-- NUEVA SECCIÓN: Veces por día -->
+                        <div class="time-config">
+                            <label>Veces por Día:</label>
+                            <div class="time-input-group">
+                                <div class="time-control">
+                                    <label>Veces</label>
+                                    <div class="input-group">
+                                        <button class="btn-adjust" onclick="adjustCO2Time('times', -1)">−</button>
+                                        <input type="number" id="co2Times" min="0" max="24" value="0">
+                                        <button class="btn-adjust" onclick="adjustCO2Time('times', 1)">+</button>
+                                    </div>
+                                </div>
                             </div>
+                        </div>
+                        
+                        <!-- MODIFICADO: Modo bucle como botón -->
+                        <div class="programmed-mode">
+                            <button id="co2BucleBtn" class="btn-bucle" onclick="toggleCO2Bucle()">
+                                Modo Bucle: DESACTIVADO
+                            </button>
                         </div>
                         
                         <!-- Controles de ejecución -->
                         <div class="execution-controls">
                             <button class="btn btn-success" onclick="startCO2Injection()">INICIAR</button>
-                            <button class="btn btn-warning" onclick="pauseCO2Injection()">DETENER</button>
+                            <button class="btn btn-warning" onclick="stopCO2Injection()">DETENER</button>
                             <button class="btn btn-danger" onclick="resetCO2Injection()">REINICIAR</button>
                         </div>
                         
@@ -314,6 +324,18 @@
                             </div>
                             <div class="timer-progress">
                                 <div class="timer-fill" id="timerFill"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- NUEVA SECCIÓN: Indicadores de estado -->
+                        <div class="co2-status-info">
+                            <div class="status-item">
+                                <span>Inyecciones Realizadas:</span>
+                                <span id="co2InjectionCount">0</span> / <span id="co2InjectionTotal">0</span>
+                            </div>
+                            <div class="status-item">
+                                <span>Próxima Inyección en:</span>
+                                <span id="co2NextInjection">--:--:--</span>
                             </div>
                         </div>
                     </div>

@@ -139,6 +139,15 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_TEMP_MIN 170  // Float (4 bytes)
 #define EEPROM_TEMP_MAX 174  // Float (4 bytes)
 
+#define EEPROM_CO2_MINUTES         180  // uint16_t (2 bytes) -> 180–181
+#define EEPROM_CO2_TIMES           182  // uint16_t (2 bytes) -> 182–183
+#define EEPROM_CO2_BUCLE           184  // uint8_t  (1 byte)  -> 184
+#define EEPROM_CO2_ACTIVE          185  // uint8_t  (1 byte)  -> 185
+#define EEPROM_CO2_INJECTIONS_DONE 186  // uint16_t (2 bytes) -> 186–187
+#define EEPROM_CO2_REMAINING_SEC   188  // uint32_t (4 bytes) -> 188–191
+#define EEPROM_INIT_FLAG           192  // uint8_t  (1 byte)  -> 192
+#define EEPROM_MAGIC_NUMBER        0xAA // (constante, NO es dirección)
+
 // Variables para calibración de turbidez
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
@@ -253,6 +262,14 @@ bool co2InjectionActive = false; // Inyección manual activa
 int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
 int co2MinutesRemaining = 0; // Minutos restantes
 unsigned long co2StartTime = 0;
+int co2TimesPerDay = 0;
+int co2TimesSet = 0;
+int co2InjectionsCompleted = 0;
+bool co2BucleMode = false;
+unsigned long co2NextInjectionTime = 0;
+unsigned long co2IntervalMs = 0;
+bool co2ScheduleActive = false;
+unsigned long co2DailyStartTime = 0;
 
 // === Variables para las secuencias ===
 struct SequenceStep {
@@ -315,6 +332,7 @@ void setup() {
   loadTemperatureLimits();
   loadTurbidityCalibration();
   loadPhCalibration(); 
+  loadCO2FromEEPROM();
 
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
@@ -546,6 +564,9 @@ void saveSystemState() {
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
   EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
   
+  // Guardar estado de inyeccion manual de CO2
+  saveCO2ToEEPROM();
+
   EEPROM.commit();
 }
 
@@ -746,61 +767,76 @@ void setupWebServer() {
     request->send(200, "text/plain", "OK");
   });
 
-  // Iniciar inyección manual de CO2
   server.on("/api/co2/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
       if (index + len == total) {
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(512);
         DeserializationError error = deserializeJson(doc, data, len);
         
         if (!error) {
           co2MinutesSet = doc["minutes"];
           co2MinutesRemaining = co2MinutesSet;
-          co2InjectionActive = true;
-          co2StartTime = millis();
-          pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+          co2TimesSet = doc["times"] | 0;
+          co2TimesPerDay = co2TimesSet;
+          co2BucleMode = doc["bucle"] | false;
+          co2InjectionsCompleted = 0;
+          co2DailyStartTime = millis();
           
-          // Si hay modo bucle, guardarlo
-          bool loopMode = doc["loop"] | false;
-          if (loopMode) {
-            // Aquí podrías implementar la lógica del bucle
-            // Por ahora solo guardamos el estado
+          if (co2TimesPerDay > 0) {
+            // Calcular intervalo entre inyecciones
+            co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
+            co2ScheduleActive = true;
+            co2NextInjectionTime = millis() + co2IntervalMs;
+            
+            // Iniciar primera inyección
+            startCO2InjectionCycle();
+          } else {
+            // Inyección única
+            co2InjectionActive = true;
+            co2StartTime = millis();
+            pcfOutput.digitalWrite(P3, LOW);
           }
+          
+          // Guardar en EEPROM
+          saveCO2ToEEPROM();
           
           request->send(200, "text/plain", "OK");
         } else {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
-    });
+  });
 
   // Pausar inyección de CO2
-  server.on("/api/co2/manual/pause", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (co2InjectionActive) {
-      co2InjectionActive = false;
-      pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
-      // Guardar tiempo restante para poder reanudar
-    }
+  server.on("/api/co2/manual/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    stopCO2Injection();
+    co2ScheduleActive = false;
+    co2TimesPerDay = 0;
     request->send(200, "text/plain", "OK");
   });
 
-  // Reiniciar inyección de CO2
   server.on("/api/co2/manual/reset", HTTP_POST, [](AsyncWebServerRequest *request){
     co2InjectionActive = false;
     co2MinutesRemaining = 0;
     co2MinutesSet = 0;
-    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+    co2TimesPerDay = 0;
+    co2TimesSet = 0;
+    co2InjectionsCompleted = 0;
+    co2BucleMode = false;
+    co2ScheduleActive = false;
+    pcfOutput.digitalWrite(P3, HIGH);
+    
+    // Limpiar EEPROM
+    clearCO2FromEEPROM();
+    
     request->send(200, "text/plain", "OK");
   });
 
-  // Reanudar inyección pausada
-  server.on("/api/co2/manual/resume", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (co2MinutesRemaining > 0) {
-      co2InjectionActive = true;
-      co2StartTime = millis();
-      pcfOutput.digitalWrite(P3, LOW); // Activar CO2
-    }
-    request->send(200, "text/plain", "OK");
+  server.on("/api/co2/manual/complete", HTTP_POST, [](AsyncWebServerRequest *request){
+  // Llamado cuando una inyección individual termina
+  co2InjectionActive = false;
+  pcfOutput.digitalWrite(P3, HIGH);
+  request->send(200, "text/plain", "OK");
   });
 
 // Control de LEDs individuales - ON/OFF
@@ -4202,13 +4238,118 @@ void stopCO2Injection() {
   }
 }
 
+void startCO2InjectionCycle() {
+  if (co2InjectionsCompleted < co2TimesPerDay) {
+    co2InjectionActive = true;
+    co2MinutesRemaining = co2MinutesSet;
+    co2StartTime = millis();
+    co2InjectionsCompleted++;
+    pcfOutput.digitalWrite(P3, LOW);
+    
+    Serial.print("Iniciando inyección ");
+    Serial.print(co2InjectionsCompleted);
+    Serial.print(" de ");
+    Serial.println(co2TimesPerDay);
+  }
+}
+
+void checkCO2Schedule() {
+  // Verificar si es tiempo de la siguiente inyección
+  if (co2ScheduleActive && !co2InjectionActive && millis() >= co2NextInjectionTime) {
+    if (co2InjectionsCompleted < co2TimesPerDay) {
+      startCO2InjectionCycle();
+      co2NextInjectionTime = millis() + co2IntervalMs;
+    } else if (co2BucleMode) {
+      // Reiniciar ciclo en modo bucle
+      co2InjectionsCompleted = 0;
+      co2DailyStartTime = millis();
+      startCO2InjectionCycle();
+      co2NextInjectionTime = millis() + co2IntervalMs;
+    } else {
+      // Ciclo diario completado sin bucle
+      co2ScheduleActive = false;
+    }
+  }
+  
+  // Verificar si han pasado 24 horas sin bucle
+  if (co2ScheduleActive && !co2BucleMode && 
+      (millis() - co2DailyStartTime) > (24UL * 3600 * 1000)) {
+    stopCO2Injection();
+    co2ScheduleActive = false;
+  }
+}
+
+void saveCO2ToEEPROM() {
+  EEPROM.write(EEPROM_CO2_MINUTES, co2MinutesSet);
+  EEPROM.write(EEPROM_CO2_TIMES, co2TimesSet);
+  EEPROM.write(EEPROM_CO2_BUCLE, co2BucleMode ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_ACTIVE, co2InjectionActive ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_INJECTIONS_DONE, co2InjectionsCompleted);
+  
+  // Guardar tiempo restante (2 bytes)
+  int remainingSeconds = co2MinutesRemaining * 60;
+  EEPROM.write(EEPROM_CO2_REMAINING_SEC, remainingSeconds & 0xFF);
+  EEPROM.write(EEPROM_CO2_REMAINING_SEC + 1, (remainingSeconds >> 8) & 0xFF);
+  
+  EEPROM.write(EEPROM_INIT_FLAG, EEPROM_MAGIC_NUMBER);
+  EEPROM.commit();
+}
+
+void clearCO2FromEEPROM() {
+  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 1; i++) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+}
+
+void loadCO2FromEEPROM() {
+  if (EEPROM.read(EEPROM_INIT_FLAG) == EEPROM_MAGIC_NUMBER) {
+    co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
+    co2TimesSet = EEPROM.read(EEPROM_CO2_TIMES);
+    co2TimesPerDay = co2TimesSet;
+    co2BucleMode = EEPROM.read(EEPROM_CO2_BUCLE) == 1;
+    co2InjectionsCompleted = EEPROM.read(EEPROM_CO2_INJECTIONS_DONE);
+    
+    bool wasActive = EEPROM.read(EEPROM_CO2_ACTIVE) == 1;
+    
+    if (wasActive) {
+      // Recuperar tiempo restante
+      int remainingSeconds = EEPROM.read(EEPROM_CO2_REMAINING_SEC) | 
+                           (EEPROM.read(EEPROM_CO2_REMAINING_SEC + 1) << 8);
+      co2MinutesRemaining = remainingSeconds / 60;
+      
+      if (co2MinutesRemaining > 0) {
+        // Reanudar inyección
+        co2InjectionActive = true;
+        co2StartTime = millis();
+        pcfOutput.digitalWrite(P3, LOW);
+        
+        if (co2TimesPerDay > 0) {
+          co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
+          co2ScheduleActive = true;
+          co2NextInjectionTime = millis() + co2IntervalMs;
+        }
+      }
+    }
+    
+    Serial.println("CO2 configuración recuperada de EEPROM");
+  }
+}
+
 void updateCO2Time() {
   if (co2InjectionActive) {
     unsigned long elapsed = (millis() - co2StartTime) / 60000; // minutos
     co2MinutesRemaining = co2MinutesSet - elapsed;
     
     if (co2MinutesRemaining <= 0) {
-      stopCO2Injection();
+      co2InjectionActive = false;
+      pcfOutput.digitalWrite(P3, HIGH);
+      
+      // Si hay programación activa, se manejará en checkCO2Schedule()
+      if (!co2ScheduleActive) {
+        stopCO2Injection();
+      }
+      
       if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE) {
         currentMenu = MENU_PH_PANEL;
         menuCursor = 1;
@@ -4216,6 +4357,9 @@ void updateCO2Time() {
       }
     }
   }
+  
+  // Verificar programación
+  checkCO2Schedule();
 }
 
 void checkPhControl() {
@@ -4429,7 +4573,6 @@ void displayTurbCalibrating() {
 
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
-  if (!adsOk) return NAN;
   int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
   float voltage = ads.computeVolts(adc);
   return voltage;
@@ -4637,7 +4780,6 @@ void displayPhCalibrating() {
 
 float getPhVoltage() {
   // Leer del sensor de pH conectado al ADC
-  if (!adsOk) return NAN;
   int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
   float voltage = ads.computeVolts(adc);
   return voltage;

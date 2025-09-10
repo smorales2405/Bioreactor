@@ -30,6 +30,13 @@ let co2InjectionActive = false;
 let co2LoopMode = false;
 let co2LoopInterval = 4;
 let co2Timer = null;
+let co2TimesPerDay = 0;
+let co2InjectionsCompleted = 0;
+let co2NextInjectionTime = null;
+let co2BucleMode = false;
+let co2ScheduleTimer = null;
+let co2NextInjectionTimer = null;
+let co2DailyStartTime = null;
 
 // Configuración de actualización
 const UPDATE_INTERVAL = 2000; // 2 segundos
@@ -1107,20 +1114,24 @@ function adjustCO2Time(unit, delta) {
         let minutes = parseInt(document.getElementById('co2Minutes').value) || 0;
         minutes = Math.max(0, Math.min(59, minutes + delta));
         document.getElementById('co2Minutes').value = minutes;
+    } else if (unit === 'times') {
+        let times = parseInt(document.getElementById('co2Times').value) || 0;
+        times = Math.max(0, Math.min(24, times + delta));
+        document.getElementById('co2Times').value = times;
     }
 }
 
-// Checkbox de modo bucle
-document.addEventListener('DOMContentLoaded', function() {
-    const loopCheckbox = document.getElementById('co2LoopMode');
-    if (loopCheckbox) {
-        loopCheckbox.addEventListener('change', function() {
-            document.getElementById('loopConfig').style.display = 
-                this.checked ? 'block' : 'none';
-            co2LoopMode = this.checked;
-        });
+function toggleCO2Bucle() {
+    co2BucleMode = !co2BucleMode;
+    const btn = document.getElementById('co2BucleBtn');
+    if (co2BucleMode) {
+        btn.textContent = 'Modo Bucle: ACTIVADO';
+        btn.classList.add('active');
+    } else {
+        btn.textContent = 'Modo Bucle: DESACTIVADO';
+        btn.classList.remove('active');
     }
-});
+}
 
 // Iniciar inyección de CO2
 async function startCO2Injection() {
@@ -1130,35 +1141,100 @@ async function startCO2Injection() {
     }
     
     const minutes = parseInt(document.getElementById('co2Minutes').value) || 0;
+    const times = parseInt(document.getElementById('co2Times').value) || 0;
     
     if (minutes === 0) {
         alert('Por favor configure el tiempo de inyección');
         return;
     }
     
-    co2InjectionTime = minutes * 60; // Convertir a segundos
-    co2TimeRemaining = co2InjectionTime;
-    co2InjectionActive = true;
+    co2InjectionTime = minutes * 60;
+    co2TimesPerDay = times;
+    co2InjectionsCompleted = 0;
+    co2DailyStartTime = new Date();
     
-    if (co2LoopMode) {
-        co2LoopInterval = parseInt(document.getElementById('loopInterval').value) || 4;
-    }
+    // Actualizar indicadores
+    document.getElementById('co2InjectionTotal').textContent = times || 1;
     
     try {
-         await fetch(`/api/co2/manual/start`, {
-             method: 'POST',
-             body: JSON.stringify({ 
-                 minutes: minutes,
-                 loop: co2LoopMode,
-                 interval: co2LoopInterval
-             })
-         });
+        await fetch(`/api/co2/manual/start`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ 
+                minutes: minutes,
+                times: times,
+                bucle: co2BucleMode
+            })
+        });
         
-        startCO2Timer();
-        console.log(`Inyección de CO2 iniciada: ${minutes} minutos`);
+        if (times > 0) {
+            // Programar inyecciones múltiples
+            scheduleCO2Injections();
+        } else {
+            // Inyección única
+            executeCO2Injection();
+        }
+        
     } catch (error) {
         console.error('Error iniciando inyección:', error);
     }
+}
+
+function scheduleCO2Injections() {
+    const intervalHours = 24 / co2TimesPerDay;
+    const intervalMs = intervalHours * 3600000;
+    
+    // Ejecutar primera inyección
+    executeCO2Injection();
+    
+    // Programar siguientes inyecciones
+    co2ScheduleTimer = setInterval(() => {
+        if (co2InjectionsCompleted < co2TimesPerDay) {
+            executeCO2Injection();
+        } else if (co2BucleMode) {
+            // Reiniciar ciclo en modo bucle
+            co2InjectionsCompleted = 0;
+            co2DailyStartTime = new Date();
+            document.getElementById('co2InjectionCount').textContent = 0;
+        } else {
+            // Detener después de 24 horas
+            stopCO2Injection();
+        }
+    }, intervalMs);
+    
+    // Actualizar contador de próxima inyección
+    updateNextInjectionTimer(intervalMs);
+}
+
+function executeCO2Injection() {
+    co2InjectionActive = true;
+    co2TimeRemaining = co2InjectionTime;
+    co2InjectionsCompleted++;
+    
+    document.getElementById('co2InjectionCount').textContent = co2InjectionsCompleted;
+    
+    startCO2Timer();
+}
+
+function updateNextInjectionTimer(intervalMs) {
+    if (co2NextInjectionTimer) clearInterval(co2NextInjectionTimer);
+    
+    let nextTime = intervalMs;
+    
+    co2NextInjectionTimer = setInterval(() => {
+        nextTime -= 1000;
+        
+        if (nextTime > 0 && !co2InjectionActive) {
+            const hours = Math.floor(nextTime / 3600000);
+            const minutes = Math.floor((nextTime % 3600000) / 60000);
+            const seconds = Math.floor((nextTime % 60000) / 1000);
+            
+            document.getElementById('co2NextInjection').textContent = 
+                `${hours.toString().padStart(2,'0')}:${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}`;
+        } else {
+            document.getElementById('co2NextInjection').textContent = '--:--:--';
+        }
+    }, 1000);
 }
 
 // Timer de CO2
@@ -1171,19 +1247,16 @@ function startCO2Timer() {
             updateCO2TimerDisplay();
         } else {
             // Tiempo expirado
+            co2InjectionActive = false;
+            clearInterval(co2Timer);
             document.getElementById('timerDisplay').classList.add('expired');
             
-            if (co2LoopMode) {
-                // Reiniciar en modo bucle
-                setTimeout(() => {
-                    co2TimeRemaining = co2InjectionTime;
-                    document.getElementById('timerDisplay').classList.remove('expired');
-                }, co2LoopInterval * 3600000); // Convertir horas a ms
-            } else {
-                // Detener
-                co2InjectionActive = false;
-                clearInterval(co2Timer);
-            }
+            // Notificar al servidor
+            fetch('/api/co2/manual/complete', {method: 'POST'});
+            
+            setTimeout(() => {
+                document.getElementById('timerDisplay').classList.remove('expired');
+            }, 2000);
         }
     }, 1000);
 }
@@ -1205,16 +1278,24 @@ function updateCO2TimerDisplay() {
 }
 
 // Pausar inyección
-async function pauseCO2Injection() {
-    if (!co2InjectionActive) return;
-    
+async function stopCO2Injection() {
     try {
-        await fetch(`/api/co2/manual/pause`, { method: 'POST' });
+        await fetch(`/api/co2/manual/stop`, { method: 'POST' });
         
+        // Limpiar todos los timers
         if (co2Timer) clearInterval(co2Timer);
-        console.log('Inyección pausada');
+        if (co2ScheduleTimer) clearInterval(co2ScheduleTimer);
+        if (co2NextInjectionTimer) clearInterval(co2NextInjectionTimer);
+        
+        co2InjectionActive = false;
+        co2TimeRemaining = 0;
+        
+        document.getElementById('co2NextInjection').textContent = '--:--:--';
+        updateCO2TimerDisplay();
+        
+        console.log('Inyección detenida');
     } catch (error) {
-        console.error('Error pausando inyección:', error);
+        console.error('Error deteniendo inyección:', error);
     }
 }
 
@@ -1223,18 +1304,21 @@ async function resetCO2Injection() {
     try {
         await fetch(`/api/co2/manual/reset`, { method: 'POST' });
         
-        co2InjectionActive = false;
-        co2TimeRemaining = 0;
-        if (co2Timer) clearInterval(co2Timer);
+        // Detener todo
+        await stopCO2Injection();
         
+        // Resetear valores
         document.getElementById('co2Minutes').value = 0;
-        document.getElementById('co2TimeRemaining').textContent = '00:00';
-        document.getElementById('timerFill').style.width = '0%';
-        document.getElementById('timerDisplay').classList.remove('expired');
+        document.getElementById('co2Times').value = 0;
+        document.getElementById('co2InjectionCount').textContent = 0;
+        document.getElementById('co2InjectionTotal').textContent = 0;
+        co2BucleMode = false;
+        document.getElementById('co2BucleBtn').textContent = 'Modo Bucle: DESACTIVADO';
+        document.getElementById('co2BucleBtn').classList.remove('active');
         
-        console.log('Inyección reiniciada');
+        console.log('Valores reiniciados');
     } catch (error) {
-        console.error('Error reiniciando inyección:', error);
+        console.error('Error reiniciando:', error);
     }
 }
 
