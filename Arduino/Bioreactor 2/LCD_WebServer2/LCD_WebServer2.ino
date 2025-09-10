@@ -4429,7 +4429,7 @@ void displayTurbCalibrating() {
 
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
-  // Por ahora retorna un valor de prueba
+  if (!adsOk) return NAN;
   int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
   float voltage = ads.computeVolts(adc);
   return voltage;
@@ -4501,17 +4501,15 @@ float getTurbidityConcentration() {
   }
   
   float voltage = getTurbidityVoltage();
+  if (!isfinite(voltage)) return 0.0;
 
   float concentration = turbCoefA * voltage * voltage + turbCoefB * voltage + turbCoefC;
   
   if (concentration < 0) concentration = 0;
   if (concentration > 100) concentration = 100;
-  
-  if (!isfinite(concentration)) {            
-    return 0.0;
-  } else {
-    return concentration;
-  }
+
+  return concentration;
+
 }
 
 void displayPhCalibrationMenu() {
@@ -4639,6 +4637,7 @@ void displayPhCalibrating() {
 
 float getPhVoltage() {
   // Leer del sensor de pH conectado al ADC
+  if (!adsOk) return NAN;
   int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
   float voltage = ads.computeVolts(adc);
   return voltage;
@@ -4700,18 +4699,16 @@ float getPhValueCalibrated() {
   }
   
   float voltage = getPhVoltage();
-  
+  if (!isfinite(voltage)) return 0.0;
+
   float ph = phCoefM * voltage + phCoefB;
   
   // Limitar el rango de pH entre 0 y 14
   if (ph < 0) ph = 0;
   if (ph > 14) ph = 14;
   
-  if (!isfinite(ph)) {            
-    return 0.0;
-  } else {
-    return ph;
-  }
+  return ph;
+
 }
 
 void displayAlmacenarMenu() {
