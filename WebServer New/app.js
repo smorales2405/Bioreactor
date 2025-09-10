@@ -767,22 +767,22 @@ function updateStepsConfig() {
            <div class="color-controls">
                <div class="color-control">
                    <label>Blanco:</label>
-                   <input type="range" id="step${i}_white" min="0" max="10" value="0">
+                   <input type="range" id="step${i}_white" min="0" max="100" value="0">
                    <span>0</span>
                </div>
                <div class="color-control">
                    <label>Rojo:</label>
-                   <input type="range" id="step${i}_red" min="0" max="10" value="0">
+                   <input type="range" id="step${i}_red" min="0" max="100" value="0">
                    <span>0</span>
                </div>
                <div class="color-control">
                    <label>Verde:</label>
-                   <input type="range" id="step${i}_green" min="0" max="10" value="0">
+                   <input type="range" id="step${i}_green" min="0" max="100" value="0">
                    <span>0</span>
                </div>
                <div class="color-control">
                    <label>Azul:</label>
-                   <input type="range" id="step${i}_blue" min="0" max="10" value="0">
+                   <input type="range" id="step${i}_blue" min="0" max="100" value="0">
                    <span>0</span>
                </div>
            </div>

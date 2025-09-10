@@ -1040,7 +1040,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       json += ",\"sequenceId\":" + String(selectedSequence);
       json += ",\"currentStep\":" + String(currentSequenceStep);
       json += ",\"totalSteps\":" + String(sequences[selectedSequence].stepCount);
-      
+      json += ",\"loopMode\":" + String(sequenceLoopMode ? "true" : "false");
       
       // Calcular tiempo transcurrido
       DateTime now = rtc.now();
