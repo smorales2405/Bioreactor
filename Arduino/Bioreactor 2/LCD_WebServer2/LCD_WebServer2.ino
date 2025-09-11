@@ -2278,7 +2278,7 @@ void handleSelection() {
         sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = menuCursor*5;        
         currentColorConfig++;
         if (currentColorConfig < 4) {
-          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig];
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig]/5;
           updateColorPreview();
         } else {
           for (int i = 0; i < numLeds; i++) {
@@ -2293,7 +2293,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentColorConfig = 0;
-          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[0];
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig]/5;
           updateColorPreview();
         }
       }
