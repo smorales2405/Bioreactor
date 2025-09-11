@@ -52,6 +52,9 @@ let alarmState = {
     silenceTime: null
 };
 
+// Variable para límite de pH
+let phLimitMin = 6.0;
+
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
     initCharts();
@@ -1457,6 +1460,91 @@ async function updatePhStatus() {
     }
 }
 
+// Cargar límite de pH al iniciar
+async function loadPhLimit() {
+    try {
+        const response = await fetch('/api/ph/load/limit');
+        const data = await response.json();
+        phLimitMin = data.min;
+        document.getElementById('phMinInput').value = phLimitMin;
+        document.getElementById('phMinSlider').value = phLimitMin;
+        updatePhLimitPreview();
+    } catch (error) {
+        console.error('Error cargando límite de pH:', error);
+    }
+}
+
+// Mostrar modal de límite de pH
+function showPhLimits() {
+    document.getElementById('phLimitModal').style.display = 'block';
+    updatePhLimitPreview();
+}
+
+// Cerrar modal de pH
+function closePhLimitModal() {
+    document.getElementById('phLimitModal').style.display = 'none';
+}
+
+// Ajustar límite mínimo de pH
+function adjustPhLimitMin(delta) {
+    const input = document.getElementById('phMinInput');
+    const slider = document.getElementById('phMinSlider');
+    
+    let newValue = parseFloat(input.value) + delta;
+    newValue = Math.max(0, Math.min(14, newValue));
+    
+    input.value = newValue.toFixed(1);
+    slider.value = newValue;
+    phLimitMin = newValue;
+    
+    updatePhLimitPreview();
+}
+
+// Actualizar preview del límite
+function updatePhLimitPreview() {
+    const percentage = (phLimitMin / 14) * 100;
+    document.getElementById('phLimitMarker').style.left = percentage + '%';
+    document.getElementById('phLimitPreview').textContent = phLimitMin.toFixed(1);
+    
+    // Actualizar posición del marcador actual
+    const currentPh = parseFloat(document.getElementById('phValue').textContent) || 7.0;
+    const currentPercentage = (currentPh / 14) * 100;
+    document.getElementById('phCurrentMarker').style.left = currentPercentage + '%';
+    document.getElementById('phCurrentPreview').textContent = currentPh.toFixed(1);
+}
+
+// Guardar límite de pH
+async function savePhLimit() {
+    phLimitMin = parseFloat(document.getElementById('phMinInput').value);
+    
+    try {
+        await fetch('/api/ph/save/limit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ min: phLimitMin })
+        });
+        
+        closePhLimitModal();
+        showNotification('Límite de pH guardado', 'success');
+    } catch (error) {
+        console.error('Error guardando límite:', error);
+        showNotification('Error al guardar límite', 'error');
+    }
+}
+
+// Sincronizar input y slider de pH
+document.getElementById('phMinInput')?.addEventListener('input', function() {
+    document.getElementById('phMinSlider').value = this.value;
+    phLimitMin = parseFloat(this.value);
+    updatePhLimitPreview();
+});
+
+document.getElementById('phMinSlider')?.addEventListener('input', function() {
+    document.getElementById('phMinInput').value = this.value;
+    phLimitMin = parseFloat(this.value);
+    updatePhLimitPreview();
+});
+
 function closeModal() {
    document.getElementById('configModal').style.display = 'none';
 }
@@ -1470,6 +1558,7 @@ function startDataUpdate() {
     updateFillingStatus();
     updatePhStatus();
     getTempLimits();
+    loadPhLimit();
 
     setInterval(() => {
         updateSensorData();

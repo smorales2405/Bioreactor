@@ -147,6 +147,8 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_TEMP_MIN 170  // Float (4 bytes)
 #define EEPROM_TEMP_MAX 174  // Float (4 bytes)
 
+#define EEPROM_PH_LIMIT_MIN 178  // float (4 bytes)
+
 #define EEPROM_CO2_MINUTES         180  // uint16_t (2 bytes) -> 180–181
 #define EEPROM_CO2_TIMES           182  // uint16_t (2 bytes) -> 182–183
 #define EEPROM_CO2_BUCLE           184  // uint8_t  (1 byte)  -> 184
@@ -265,6 +267,7 @@ float calibrationValue = 0.0;
 int calibrationStep = 0;
 
 float phLimitSet = 7.0;      // pH límite establecido
+float phLimitMin = 4.0;
 bool phControlActive = false; // Control automático activo
 bool co2InjectionActive = false; // Inyección manual activa
 int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
@@ -338,6 +341,7 @@ void setup() {
   // Inicializar EEPROM
   EEPROM.begin(512);
   loadTemperatureLimits();
+  loadpHLimit();
   loadTurbidityCalibration();
   loadPhCalibration(); 
   
@@ -718,7 +722,31 @@ void setupWebServer() {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
-    });
+  });
+
+  server.on("/api/ph/load/limit", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"min\":" + String(phLimitMin, 1);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Establecer límite mínimo de pH
+  server.on("/api/ph/save/limit", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          phLimitMin = doc["min"];
+          savePhLimit();
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+  });
 
   // Estado de alarmas mejorado
   server.on("/api/alarm/status", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -3700,6 +3728,12 @@ void saveTemperatureLimits() {
   Serial.println(tempLimitMax);
 }
 
+void savePhLimit() {
+  EEPROM.put(EEPROM_PH_LIMIT_MIN, phLimitMin);
+  EEPROM.commit();
+  Serial.println("Límite mínimo de pH guardado: " + String(phLimitMin));
+}
+
 void loadTemperatureLimits() {
   EEPROM.get(EEPROM_TEMP_MIN, tempLimitMin);
   EEPROM.get(EEPROM_TEMP_MAX, tempLimitMax);
@@ -3723,6 +3757,13 @@ void loadTemperatureLimits() {
   Serial.print(" Max: ");
   Serial.println(tempLimitMax);
 }
+
+void loadpHLimit() {
+  EEPROM.get(EEPROM_PH_LIMIT_MIN, phLimitMin);
+  if (isnan(phLimitMin) || phLimitMin < 0 || phLimitMin > 14) {
+    phLimitMin = 6.0;  // Valor por defecto
+  }
+  }
 
 void saveSequence(int seqIndex) {
   String filename = "/seq_" + String(seqIndex + 1) + ".json";
@@ -5361,7 +5402,7 @@ void checkAlarms() {
   
   // Verificar si los sensores están en condiciones normales actualmente
   bool tempIsNormal = (temperature >= tempLimitMin && temperature <= tempLimitMax);
-  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitSet);
+  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitMin);
   
   // Verificar alarma de temperatura
   tempAlarm = false;
@@ -5386,7 +5427,7 @@ void checkAlarms() {
   
   // Verificar alarma de pH
   phAlarm = false;
-  if (!co2Active && !co2InjectionActive && phValue < phLimitSet) {
+  if (!co2Active && !co2InjectionActive && phValue < phLimitMin) {
     // Solo activar si:
     // 1. No fue silenciada, O
     // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente

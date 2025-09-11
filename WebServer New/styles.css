@@ -1500,3 +1500,66 @@ h1 {
   font-size: 14px;
   border-radius: 8px;
 }
+
+/* Botón de configuración para pH */
+.sensor-card .config-btn {
+    margin-top: 15px;
+    width: 100%;
+    padding: 10px;
+    background: linear-gradient(45deg, #3b82f6, #06b6d4);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s ease;
+}
+
+.sensor-card .config-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(59, 130, 246, 0.3);
+}
+
+/* Preview de escala de pH en modal */
+.ph-scale-preview {
+    height: 40px;
+    background: linear-gradient(90deg, 
+        #ef4444 0%, 
+        #f59e0b 35%, 
+        #10b981 50%, 
+        #3b82f6 65%, 
+        #8b5cf6 100%);
+    border-radius: 20px;
+    position: relative;
+    margin: 20px 0;
+}
+
+.ph-scale-preview .limit-marker {
+    position: absolute;
+    top: -10px;
+    width: 3px;
+    height: 60px;
+    background: #ff4444;
+    border-radius: 2px;
+    transition: left 0.3s ease;
+    box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+}
+
+.ph-scale-preview .current-marker {
+    position: absolute;
+    top: -5px;
+    width: 4px;
+    height: 50px;
+    background: white;
+    border-radius: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+.limit-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 14px;
+}

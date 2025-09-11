@@ -78,6 +78,10 @@
                             <span class="base">Base</span>
                         </div>
                     </div>
+                    <!-- Agregar botón de límites -->
+                    <button class="config-btn" onclick="showPhLimits()">
+                        Fijar Límite Inferior
+                    </button>
                     <div class="click-hint">Click para control de pH</div>
                 </div>
 
@@ -558,6 +562,39 @@
                     <button class="btn btn-primary" onclick="saveTempLimits()">Guardar</button>
                     <button class="btn btn-secondary" onclick="closeTempLimitsModal()">Cancelar</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="phLimitModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closePhLimitModal()">&times;</span>
+            <h2>Configurar Límite Inferior de pH</h2>
+            
+            <div class="limit-control">
+                <label>Límite Mínimo (pH):</label>
+                <div class="limit-input-group">
+                    <button class="btn-adjust" onclick="adjustPhLimitMin(-0.1)">−</button>
+                    <input type="number" id="phMinInput" min="0" max="14" step="0.1" value="6.0">
+                    <button class="btn-adjust" onclick="adjustPhLimitMin(0.1)">+</button>
+                </div>
+                <input type="range" id="phMinSlider" min="0" max="14" step="0.1" value="6.0">
+            </div>
+            
+            <div class="limit-preview">
+                <div class="ph-scale-preview">
+                    <div class="limit-marker" id="phLimitMarker"></div>
+                    <div class="current-marker" id="phCurrentMarker"></div>
+                </div>
+                <div class="limit-info">
+                    <span>Actual: <span id="phCurrentPreview">--</span></span>
+                    <span>Límite: <span id="phLimitPreview">6.0</span></span>
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="savePhLimit()">Guardar</button>
+                <button class="btn btn-secondary" onclick="closePhLimitModal()">Cancelar</button>
             </div>
         </div>
     </div>
