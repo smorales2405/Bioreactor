@@ -1051,15 +1051,15 @@ h1 {
     background: #1d4ed8;
 }
 
-#phLimitInput, #co2Minutes {
-    width: 100px;
-    padding: 10px;
-    background: var(--surface-light);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    color: var(--text-primary);
-    text-align: center;
-    font-size: 18px;
+#phLimitInput, #co2Minutes, #co2Times {
+  width: 100px;
+  padding: 10px;
+  background: var(--surface-light);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  text-align: center;
+  font-size: 18px;
 }
 
 .auto-status {
@@ -1562,4 +1562,15 @@ h1 {
     justify-content: space-between;
     margin-top: 10px;
     font-size: 14px;
+}
+
+#phMinInput {
+  width: 80px;              /* mismo ancho que usas en la sección de temperatura */
+  padding: 10px;
+  background: var(--background);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  text-align: center;
+  font-size: 18px;
 }
