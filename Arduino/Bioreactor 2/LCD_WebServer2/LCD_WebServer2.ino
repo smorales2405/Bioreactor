@@ -59,6 +59,9 @@ bool alarmSilenced = false;
 bool tempWasNormal = false;
 bool phWasNormal = false;
 bool alarmWasSilenced = false;
+// Flags para evitar registro duplicado de alarmas
+bool tempAlarmLogged = false;  // Indica si ya se registró alarma de temperatura
+bool phAlarmLogged = false;    // Indica si ya se registró alarma de pH
 
 #define MAX_ALARM_HISTORY 100
 #define ALARM_LOG_FILE "/alarm_log.txt"
@@ -5414,15 +5417,27 @@ void checkAlarms() {
       if (!alarmWasSilenced || (alarmWasSilenced && tempWasNormal)) {
         tempAlarm = true;
         shouldActivateAlarm = true;
-        // Agregar registro de alarma
-        if (temperature < tempLimitMin) {
-          logAlarmToSD("Temperatura Baja", temperature);
+        
+        // Solo registrar en SD si no se ha registrado previamente
+        if (!tempAlarmLogged) {
+          if (temperature < tempLimitMin) {
+            logAlarmToSD("Temperatura Baja", temperature);
+          } else {
+            logAlarmToSD("Temperatura Alta", temperature);
+          }
+          tempAlarmLogged = true;  // Marcar como registrada
+          Serial.println("ALARMA: Temperatura fuera de límites - Registrada en SD");
         } else {
-          logAlarmToSD("Temperatura Alta", temperature);
+          Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
         }
-        Serial.println("ALARMA: Temperatura fuera de límites");
       }
     }
+  }
+  
+  // Si la temperatura vuelve a normal, resetear el flag de logging
+  if (tempIsNormal && tempAlarmLogged) {
+    tempAlarmLogged = false;
+    Serial.println("Temperatura normalizada - Flag de registro reseteado");
   }
   
   // Verificar alarma de pH
@@ -5434,10 +5449,22 @@ void checkAlarms() {
     if (!alarmWasSilenced || (alarmWasSilenced && phWasNormal)) {
       phAlarm = true;
       shouldActivateAlarm = true;
-      // Agregar registro de alarma
-      logAlarmToSD("pH Bajo", phValue);
-      Serial.println("ALARMA: pH bajo el límite fijado");
+      
+      // Solo registrar en SD si no se ha registrado previamente
+      if (!phAlarmLogged) {
+        logAlarmToSD("pH Bajo", phValue);
+        phAlarmLogged = true;  // Marcar como registrada
+        Serial.println("ALARMA: pH bajo el límite - Registrada en SD");
+      } else {
+        Serial.println("ALARMA: pH bajo el límite - Ya registrada");
+      }
     }
+  }
+  
+  // Si el pH vuelve a normal, resetear el flag de logging
+  if (phIsNormal && phAlarmLogged) {
+    phAlarmLogged = false;
+    Serial.println("pH normalizado - Flag de registro reseteado");
   }
   
   // Si todos los sensores vuelven a normal, resetear el flag de silenciado

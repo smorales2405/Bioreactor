@@ -1334,7 +1334,11 @@ function updateNextInjectionTimer(intervalMs) {
 
 // Timer de CO2
 function startCO2Timer() {
-    if (co2Timer) clearInterval(co2Timer);
+    
+    if (co2Timer) {
+        clearInterval(co2Timer);
+        co2Timer = null;
+    }
     
     co2Timer = setInterval(() => {
         if (co2TimeRemaining > 0) {
