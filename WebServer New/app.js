@@ -197,34 +197,86 @@ function initCharts() {
 
    // Gráfico de pH
    const phCtx = document.getElementById('phChart').getContext('2d');
-   phChart = new Chart(phCtx, {
-       type: 'line',
-       data: {
-           labels: [],
-           datasets: [{
-               label: 'pH',
-               data: [],
-               borderColor: '#10b981',
-               backgroundColor: 'rgba(16, 185, 129, 0.1)',
-               tension: 0.4
-           }]
-       },
-       options: {
-           ...commonOptions,
-           scales: {
-               ...commonOptions.scales,
-               y: {
-                   ...commonOptions.scales.y,
-                   min: 0,
-                   max: 14,
-                    title: {
-                    display: true,
-                    text: 'pH'
+    phChart = new Chart(ctxPh, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'pH',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    tension: 0.1
+                },
+                {
+                    label: 'Límite Inferior',
+                    data: [],
+                    borderColor: 'rgba(255, 206, 86, 0.8)',
+                    backgroundColor: 'transparent',
+                    borderDash: [5, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                },
+                {
+                    label: 'Límite Control',
+                    data: [],
+                    borderColor: 'rgba(54, 162, 235, 0.8)',
+                    backgroundColor: 'transparent',
+                    borderDash: [5, 5],
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    fill: false
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    labels: {
+                        color: '#ffffff'
                     }
-               }
-           }
-       }
-   });
+                },
+                title: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    min: 0,
+                    max: 14,
+                    ticks: {
+                        color: '#ffffff'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    title: {
+                        display: true,
+                        text: 'pH',
+                        color: '#ffffff'
+                    }
+                },
+                x: {
+                    ticks: {
+                        color: '#ffffff'
+                    },
+                    grid: {
+                        color: 'rgba(255, 255, 255, 0.1)'
+                    },
+                    title: {
+                        display: true,
+                        text: 'Tiempo',
+                        color: '#ffffff'
+                    }
+                }
+            }
+        }
+    });
 }
 
 // Actualización de datos de sensores
@@ -294,10 +346,11 @@ function updateConcGauge(conc) {
 }
 
 function updateCharts() {
-   tempChart.data.labels = sensorData.timestamps;
-   tempChart.data.datasets[0].data = sensorData.temperature;
+    // Actualizar gráfico de temperatura
+    tempChart.data.labels = sensorData.timestamps;
+    tempChart.data.datasets[0].data = sensorData.temperature;
 
-    // Actualizar líneas de límites con la cantidad correcta de puntos
+    // Actualizar líneas de límites de temperatura
     const limitDataPoints = sensorData.timestamps.length;
     tempChart.data.datasets.forEach(dataset => {
         if (dataset.label.includes('Límite')) {
@@ -307,11 +360,17 @@ function updateCharts() {
         }
     });
 
-   tempChart.update();
-   
-   phChart.data.labels = sensorData.timestamps;
-   phChart.data.datasets[0].data = sensorData.ph;
-   phChart.update();
+    tempChart.update();
+    
+    // Actualizar gráfico de pH
+    phChart.data.labels = sensorData.timestamps;
+    phChart.data.datasets[0].data = sensorData.ph;
+    
+    // Actualizar líneas de límites de pH
+    phChart.data.datasets[1].data = Array(limitDataPoints).fill(phLimitMin);
+    phChart.data.datasets[2].data = Array(limitDataPoints).fill(phLimit);
+    
+    phChart.update();
 }
 
 // Función para mostrar modal de límites
@@ -1182,6 +1241,8 @@ async function setPhAutoControl() {
         document.getElementById('autoControlStatus').textContent = 'ACTIVO';
         document.getElementById('co2AutoLight').classList.add('active');
         
+        updateCharts();
+
         console.log(`Control automático activado. pH límite: ${phLimit}`);
     } catch (error) {
         console.error('Error activando control automático:', error);
@@ -1440,7 +1501,8 @@ async function updatePhStatus() {
         try {
             const response = await fetch(`/api/ph/status`);
             const data = await response.json();
-            
+            phLimit = data.phLimit || 7.0;
+
             document.getElementById('phCurrentLarge').textContent = data.phValue.toFixed(1);
             document.getElementById('phFixedValue').textContent = data.phLimit.toFixed(1);
             
@@ -1458,6 +1520,8 @@ async function updatePhStatus() {
             }
             
             updatePhControlDisplay();
+            updateCharts();
+
         } catch (error) {
             console.error('Error actualizando estado pH:', error);
         }
@@ -1473,6 +1537,9 @@ async function loadPhLimit() {
         document.getElementById('phMinInput').value = phLimitMin;
         document.getElementById('phMinSlider').value = phLimitMin;
         updatePhLimitPreview();
+        
+        // Actualizar gráfico con nuevo límite
+        updateCharts();
     } catch (error) {
         console.error('Error cargando límite de pH:', error);
     }
@@ -1530,6 +1597,7 @@ async function savePhLimit() {
         
         closePhLimitModal();
         showNotification('Límite de pH guardado', 'success');
+        updateCharts();
     } catch (error) {
         console.error('Error guardando límite:', error);
         showNotification('Error al guardar límite', 'error');
