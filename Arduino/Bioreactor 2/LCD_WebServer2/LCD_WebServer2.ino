@@ -62,6 +62,7 @@ bool alarmWasSilenced = false;
 // Flags para evitar registro duplicado de alarmas
 bool tempAlarmLogged = false;  // Indica si ya se registró alarma de temperatura
 bool phAlarmLogged = false;    // Indica si ya se registró alarma de pH
+bool emergencyAlarmLogged = false;
 
 #define MAX_ALARM_HISTORY 100
 #define ALARM_LOG_FILE "/alarm_log.txt"
@@ -5478,11 +5479,6 @@ void checkAlarms() {
   tempWasNormal = tempIsNormal;
   phWasNormal = phIsNormal;
   
-  // La alarma de emergencia se maneja en handleEmergencyState()
-  if (emergencyAlarm) {
-    shouldActivateAlarm = true;
-  }
-  
   // Activar o desactivar alarmas según corresponda
   if (shouldActivateAlarm && !alarmActive) {
     if (!alarmSilenced) {
@@ -5562,6 +5558,13 @@ void handleEmergencyState() {
     emergencyActive = true;
     emergencyAlarm = true;
 
+    // Registrar emergencia en SD (solo una vez por evento)
+    if (!emergencyAlarmLogged) {
+      logAlarmToSD("EMERGENCIA", 1.0);  // Valor 0 porque no es un sensor
+      emergencyAlarmLogged = true;
+      Serial.println("EMERGENCIA: Botón presionado - Registrada en SD");
+    }
+
     // Activar alarma de emergencia inmediatamente
     activateAlarm();
 
@@ -5597,6 +5600,10 @@ void handleEmergencyState() {
   else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
     emergencyActive = false;
     emergencyAlarm = false;
+    
+    // Resetear el flag para permitir registro de futuras emergencias
+    emergencyAlarmLogged = false;
+    Serial.println("Emergencia desactivada - Flag de registro reseteado");
     
     // Desactivar alarma de emergencia
     deactivateAlarm();
