@@ -45,8 +45,7 @@ Adafruit_ADS1115 ads;
 // Flujometro
 #define FLOW_SENSOR_PIN 36
 #define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
-#define K_FACTOR 7.5
-#define PULSOS_POR_LITRO (K_FACTOR * 60)
+#define PULSOS_POR_LITRO 450
 
 // Variables para control de alarmas
 bool alarmActive = false;
