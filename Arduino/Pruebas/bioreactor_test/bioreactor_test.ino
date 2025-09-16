@@ -64,7 +64,7 @@ bool phAlarmLogged = false;    // Indica si ya se registró alarma de pH
 bool emergencyAlarmLogged = false;
 
 #define MAX_ALARM_HISTORY 100
-#define ALARM_LOG_FILE "/alarm_log.txt"
+#define ALARM_LOG_FILE "Log/alarm_log.txt"
 struct AlarmRecord {
   char timestamp[20];
   char type[30];
@@ -484,7 +484,7 @@ void setup() {
   // Verificar y reanudar logging si estaba activo
   for (int i = 0; i < 4; i++) {
     // Leer flag de logging desde archivo de configuración
-    String configFile = "/config_tipo" + String(i + 1) + ".txt";
+    String configFile = "/config/config_tipo" + String(i + 1) + ".txt";
     if (SD.exists(configFile)) {
       File file = SD.open(configFile, FILE_READ);
       if (file) {
@@ -681,19 +681,19 @@ void setupWiFi() {
 void setupWebServer() {
   // Servir archivos estáticos desde la SD
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/index.html", "text/html");
+    request->send(SD, "/Webserver/index.html", "text/html");
   });
   
   server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/styles.css", "text/css");
+    request->send(SD, "/Webserver/styles.css", "text/css");
   });
 
   server.on("/chart.umd.min.js", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/chart.umd.min.js", "text/js");
+    request->send(SD, "/Webserver/chart.umd.min.js", "text/js");
   });   
 
   server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/app.js", "text/js");
+    request->send(SD, "/Webserver/app.js", "text/js");
   });  
   
   // API para sensores
@@ -5300,7 +5300,7 @@ void startDataLogging(int type) {
   lastLogTime[type] = millis();
   
   // Crear archivo de configuración para mantener estado
-  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  String configFile = "/config/config_tipo" + String(type + 1) + ".txt";
   File file = SD.open(configFile, FILE_WRITE);
   if (file) {
     file.println("LOGGING");
@@ -5319,7 +5319,7 @@ void stopDataLogging(int type) {
   dataLogging[type] = false;
   
   // Eliminar archivo de configuración
-  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  String configFile = "/config/config_tipo" + String(type + 1) + ".txt";
   SD.remove(configFile);
   
   lcd.clear();
@@ -5331,7 +5331,7 @@ void stopDataLogging(int type) {
 }
 
 void deleteDataLog(int type) {
-  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  String filename = "/Datos/datos_tipo" + String(type + 1) + ".txt";
   
   if (SD.exists(filename)) {
     SD.remove(filename);
@@ -5349,7 +5349,7 @@ void deleteDataLog(int type) {
 }
 
 void saveDataToSD(int type) {
-  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  String filename = "/Datos/datos_tipo" + String(type + 1) + ".txt";
   
   // Verificar si el archivo existe, si no, crear con encabezados
   bool fileExists = SD.exists(filename);
