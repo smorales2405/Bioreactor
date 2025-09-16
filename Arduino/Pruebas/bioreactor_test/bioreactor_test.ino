@@ -2431,6 +2431,7 @@ void handleSelection() {
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
+      saveSystemState();
       break;
       
     case MENU_INTENSITY:
@@ -2440,6 +2441,7 @@ void handleSelection() {
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
+      saveSystemState();
       break;
       
   case MENU_SEQ_LIST:
@@ -2644,11 +2646,13 @@ void handleSelection() {
       currentMenu = MENU_MAIN;
       menuCursor = 2;
     }
+    saveSystemState();
     break;
 
     case MENU_LLENADO_SET_VOLUME:
       currentMenu = MENU_LLENADO_CONFIRM;
       menuCursor = 1; // Por defecto en NO
+      saveSystemState();
       break;
 
     case MENU_LLENADO_CONFIRM:
@@ -2666,6 +2670,7 @@ void handleSelection() {
     case MENU_LLENADO_ACTIVE:
       currentMenu = MENU_LLENADO_STOP_CONFIRM;
       menuCursor = 1;
+      saveSystemState();
       break;
 
     case MENU_LLENADO_STOP_CONFIRM:
@@ -2678,6 +2683,7 @@ void handleSelection() {
         // NO - Continuar
         currentMenu = MENU_LLENADO_ACTIVE;
       }
+      saveSystemState();
       break;
     
     case MENU_LLENADO_RESET_CONFIRM:
@@ -2711,6 +2717,7 @@ void handleSelection() {
         currentMenu = MENU_MAIN;
         menuCursor = 3;
       }
+      saveSystemState();
       break;
 
     case MENU_SEQ_EXECUTION_MODE:
@@ -2786,6 +2793,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
     }
+    saveSystemState();
     break;
 
   case MENU_POTENCIA:
@@ -2852,6 +2860,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 0;
     }
+    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_STOP:
@@ -2865,6 +2874,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 1;
     }
+    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_DELETE:
