@@ -137,7 +137,7 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
 
 // Direcciones EEPROM para estado del sistema
-#define EEPROM_SYSTEM_STATE 300      // 1 byte - flags de estado
+#define EEPROM_SEQUENCE_LOOP 300      // 1 byte - flags de estado
 #define EEPROM_LED_STATES 301        // 4 bytes - estados de LEDs
 #define EEPROM_LED_PWM 305           // 4 bytes - valores PWM
 #define EEPROM_SEQUENCE_RUNNING 309  // 1 byte - secuencia activa
@@ -572,6 +572,7 @@ void saveSystemState() {
   }
   
   // Guardar estado de secuencia
+  EEPROM.write(EEPROM_SEQUENCE_LOOP, sequenceLoopMode ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
   EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
@@ -604,12 +605,13 @@ void loadSystemState() {
   if (wasSequenceRunning) {
     selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
     currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
+    sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
     
     // Verificar si la secuencia es válida antes de reanudar
     if (selectedSequence < 10 && sequences[selectedSequence].configured) {
       sequenceRunning = true;
-      stepStartTime = rtc.now();
-      applySequenceStep(currentSequenceStep);
+      //stepStartTime = rtc.now();
+      checkSequenceProgress();
       
       Serial.println("Reanudando secuencia tras reinicio");
     }
