@@ -111,7 +111,7 @@ bool ledStates[4] = {false, false, false, false};
 int lastClk = HIGH;
 unsigned long lastButtonPress = 0;
 unsigned long lastExtraButtonPress = 0;
-const unsigned long debounceDelay = 200;
+const unsigned long debounceDelay = 500;
 
 // Instancias PCF8574
 PCF8574 pcfInput(0x20);
@@ -395,7 +395,7 @@ void setup() {
   pcfOutput.digitalWrite(P3, HIGH);
   pcfOutput.digitalWrite(P4, HIGH);
   pcfOutput.begin();
-
+  
   // Configurar PWM para cada LED
   for (int i = 0; i < numLeds; i++) {
     ledcAttach(ledPins[i], pwmFreq, pwmResolution);
@@ -448,6 +448,7 @@ void setup() {
   // Inicializar SD
   lcd.setCursor(0, 3);
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  //delay(3000);
   if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println("Error al inicializar SD");
     lcd.print("SD Card Error!");
@@ -479,12 +480,13 @@ void setup() {
   // Verificar y reanudar logging si estaba activo
   for (int i = 0; i < 4; i++) {
     // Leer flag de logging desde archivo de configuración
-    String configFile = "config_tipo" + String(i + 1) + ".txt";
+    String configFile = "/config_tipo" + String(i + 1) + ".txt";
     if (SD.exists(configFile)) {
       File file = SD.open(configFile, FILE_READ);
       if (file) {
         String state = file.readStringUntil('\n');
-        if (state == "LOGGING") {
+        state.trim();
+        if (state.equals("LOGGING")) {
           dataLogging[i] = true;
           lastLogTime[i] = millis();
           Serial.print("Reanudando logging Tipo ");
@@ -1334,7 +1336,7 @@ void handleButtons() {
   }
   
   // Pulsador adicional
-  if (pcfInput.digitalRead(P1,true) == 0) {
+  if (pcfInput.digitalRead(P1) == 0) {
     if (millis() - lastExtraButtonPress > debounceDelay) {
       lastExtraButtonPress = millis();
     }
@@ -1342,12 +1344,241 @@ void handleButtons() {
   }
 }
 
-void handleExtraButton () {
-  switch (currentMenu) {   
+void handleExtraButton() {
+  switch (currentMenu) {
+    // Menús principales - volver al menú anterior
+    case MENU_SENSORS:
+      currentMenu = MENU_MAIN;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_ACTION:
+      currentMenu = MENU_MAIN;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO:
+      currentMenu = MENU_MAIN;
+      menuCursor = 2;
+      updateDisplay();
+      break;
+      
+    case MENU_AIREACION:
+      currentMenu = MENU_MAIN;
+      menuCursor = 3;
+      updateDisplay();
+      break;
+      
     case MENU_CO2:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
       updateDisplay();
+      break;
+      
+    case MENU_POTENCIA:
+      currentMenu = MENU_MAIN;
+      menuCursor = 5;
+      updateDisplay();
+      break;
+
+    case MENU_ALMACENAR:
+      currentMenu = MENU_MAIN;
+      menuCursor = 6;
+      updateDisplay();
+      break;
+
+    case MENU_WEBSERVER:
+      currentMenu = MENU_MAIN;
+      menuCursor = 7;
+      updateDisplay();
+      break;
+
+    // Submenús de sensores
+    case MENU_TEMP_LIMITS:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_SENSOR_PH:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SENSOR_TURBIDEZ:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 1;
+      updateDisplay();
+      break;    
+
+    //Submenus de pH
+    case MENU_PH_PANEL:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      phControlActive = false; 
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;   
+
+    case MENU_PH_CALIBRATION_MENU:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    //Submenus de Turbidez
+    case MENU_TURB_CALIBRATION:
+      currentMenu = MENU_SENSOR_TURBIDEZ;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      currentMenu = MENU_SENSOR_TURBIDEZ;
+      menuCursor = 1;
+      updateDisplay();
+      break;    
+
+    // Submenús de LEDs
+    case MENU_LED_SELECT:
+      currentMenu = MENU_ACTION;
+      menuCursor = selectedAction;
+      updateDisplay();
+      break;
+      
+    case MENU_ONOFF:
+    case MENU_INTENSITY:
+      currentMenu = MENU_LED_SELECT;
+      menuCursor = selectedLed;
+      updateDisplay();
+      break;
+      
+    // Menús de secuencias
+    case MENU_SEQ_LIST:
+      currentMenu = MENU_ACTION;
+      menuCursor = 2;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_OPTIONS:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = selectedSequence;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_EXECUTION_MODE:
+      currentMenu = MENU_SEQ_OPTIONS;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_CONFIG_CANTIDAD:
+    case MENU_SEQ_CONFIG_COLOR:
+    case MENU_SEQ_CONFIG_TIME:
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+      currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_CONFIRM_SAVE:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = selectedSequence;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_RUNNING:
+      currentMenu = MENU_SEQ_STOP_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_STOP_CONFIRM:
+      currentMenu = MENU_SEQ_RUNNING;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      if (currentConfigStep < sequences[selectedSequence].stepCount) {
+        if (currentColorConfig < 4) {
+          currentMenu = MENU_SEQ_CONFIG_COLOR;
+        } else {
+          currentMenu = MENU_SEQ_CONFIG_TIME;
+        }
+      } else {
+        currentMenu = MENU_SEQ_CONFIG_CANTIDAD;
+      }
+      updateDisplay();
+      break;
+
+    // Menús de llenado
+    case MENU_LLENADO_SET_VOLUME:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_CONFIRM:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_ACTIVE:
+      currentMenu = MENU_LLENADO_STOP_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+              
+    case MENU_LLENADO_STOP_CONFIRM:
+      currentMenu = MENU_LLENADO_ACTIVE;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_RESET_CONFIRM:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_DELETE_ALL_CONFIRM:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = 10;
+      updateDisplay();
+      break;
+  
+    case MENU_ALMACENAR_TYPE:
+      currentMenu = MENU_ALMACENAR;
+      updateDisplay();
+      break;
+
+    // Menú principal - no hacer nada
+    case MENU_MAIN:
+      // Ya estamos en el menú principal
+      break;
+      
+    default:
+      // Para cualquier otro caso no manejado
       break;
   }
 }
@@ -1500,6 +1731,7 @@ void incrementCursor() {
       break;
       
     case MENU_INTENSITY:
+      menuCursor = constrain(menuCursor, 0, 20);
       if (menuCursor < 20) {  // Cambiar de 10 a 20 (0-100 en pasos de 5)
         menuCursor++;
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
@@ -1715,7 +1947,8 @@ void decrementCursor() {
       break;
       
     case MENU_INTENSITY:
-      if (menuCursor >= 0) {
+      menuCursor = constrain(menuCursor, 0, 20);
+      if (menuCursor >= 1) {
         menuCursor--;
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -2194,7 +2427,6 @@ void handleSelection() {
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
-      saveSystemState();
       break;
       
     case MENU_INTENSITY:
@@ -2204,7 +2436,6 @@ void handleSelection() {
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
-      saveSystemState();
       break;
       
   case MENU_SEQ_LIST:
@@ -2476,7 +2707,6 @@ void handleSelection() {
         currentMenu = MENU_MAIN;
         menuCursor = 3;
       }
-      saveSystemState();
       break;
 
     case MENU_SEQ_EXECUTION_MODE:
@@ -2552,7 +2782,6 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
     }
-    saveSystemState();
     break;
 
   case MENU_POTENCIA:
@@ -2852,7 +3081,7 @@ void displayMainMenu() {
   
   for (int i = 0; i < 3; i++) {
     int optionIndex = startIndex + i;
-    if (optionIndex < 8) {
+    if (optionIndex < 9) {
       lcd.setCursor(0, i + 1);
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
       lcd.print(opciones[optionIndex]);
@@ -3205,6 +3434,7 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 1);
   lcd.print("Nivel: ");
+  menuCursor = constrain(menuCursor, 0, 20);
   int percentage = menuCursor * 5;  // Pasos de 5%
   lcd.print(percentage);
   lcd.print("%");
@@ -3214,7 +3444,7 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 2);
   lcd.print("[");
-  int barLength = map(menuCursor, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
+  int barLength = map(percentage, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
   for (int i = 0; i < 18; i++) {
     if (i < barLength) {
       lcd.print("=");
@@ -3355,6 +3585,7 @@ void displaySeqConfigColor() {
     lcd.print(menuCursor * 5);  // Mostrar directamente el porcentaje
     lcd.print("%");
     
+    lcd.setCursor(0, 2);
     lcd.print("[");
     int barLength = map(menuCursor, 0, 20, 0, 18);
     for (int i = 0; i < 18; i++) {
@@ -4667,8 +4898,9 @@ void displayTurbCalibrating() {
 
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
-  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
-  float voltage = ads.computeVolts(adc);
+  //int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
+  //float voltage = ads.computeVolts(adc);
+  float voltage = 0.0;
   return voltage;
 }
 
@@ -4877,8 +5109,9 @@ void displayPhCalibrating() {
 
 float getPhVoltage() {
   // Leer del sensor de pH conectado al ADC
-  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
-  float voltage = ads.computeVolts(adc);
+  //int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
+  //float voltage = ads.computeVolts(adc);
+  float voltage = 0.0;
   return voltage;
 }
 
