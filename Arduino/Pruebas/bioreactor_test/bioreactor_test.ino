@@ -851,7 +851,7 @@ void setupWebServer() {
     phControlActive = false;
     if (co2Active && !co2InjectionActive) {
       co2Active = false;
-      //pcfOutput.digitalWrite(P3, HIGH);
+      pcfOutput.digitalWrite(P3, HIGH);
     }
     request->send(200, "text/plain", "OK");
   });
@@ -883,7 +883,7 @@ void setupWebServer() {
             // Inyección única
             co2InjectionActive = true;
             co2StartTime = millis();
-            //pcfOutput.digitalWrite(P3, LOW);
+            pcfOutput.digitalWrite(P3, LOW);
           }
           
           // Guardar en EEPROM
@@ -894,6 +894,7 @@ void setupWebServer() {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
+    saveSystemState();
   });
 
   // Pausar inyección de CO2
@@ -901,6 +902,7 @@ void setupWebServer() {
     stopCO2Injection();
     co2ScheduleActive = false;
     co2TimesPerDay = 0;
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -913,7 +915,7 @@ void setupWebServer() {
     co2InjectionsCompleted = 0;
     co2BucleMode = false;
     co2ScheduleActive = false;
-    //pcfOutput.digitalWrite(P3, HIGH);
+    pcfOutput.digitalWrite(P3, HIGH);
     
     // Limpiar EEPROM
     clearCO2FromEEPROM();
@@ -924,95 +926,108 @@ void setupWebServer() {
   server.on("/api/co2/manual/complete", HTTP_POST, [](AsyncWebServerRequest *request){
   // Llamado cuando una inyección individual termina
   co2InjectionActive = false;
-  //pcfOutput.digitalWrite(P3, HIGH);
+  pcfOutput.digitalWrite(P3, HIGH);
+  saveSystemState();
   request->send(200, "text/plain", "OK");
   });
 
-// Control de LEDs individuales - ON/OFF
-server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(0, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(0, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(1, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(1, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(2, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(2, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(3, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(3, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-  // Control PWM individual para cada color
-server.on("/led/blanco/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(0, value > 0, value);
+  // Control de LEDs individuales - ON/OFF
+  server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(0, true, 100);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
+  });
 
-server.on("/led/rojo/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(1, value > 0, value);
+  server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(0, false, 0);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
+  });
 
-server.on("/led/verde/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(2, value > 0, value);
+  server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(1, true, 100);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
+  });
 
-server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(3, value > 0, value);
+  server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(1, false, 0);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
+  });
+
+  server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(2, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(2, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(3, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(3, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+    // Control PWM individual para cada color
+  server.on("/led/blanco/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(0, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
+
+  server.on("/led/rojo/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(1, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
+
+  server.on("/led/verde/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(2, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
+
+  server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(3, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
   
   // Estado de todos los LEDs
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -1202,26 +1217,30 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
-    //pcfOutput.digitalWrite(P2, LOW);
+    pcfOutput.digitalWrite(P2, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = false;
-    //pcfOutput.digitalWrite(P2, HIGH);
+    pcfOutput.digitalWrite(P2, HIGH);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   // Control de CO2
   server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = true;
-    //pcfOutput.digitalWrite(P3, LOW);
+    pcfOutput.digitalWrite(P3, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = false;
-    //pcfOutput.digitalWrite(P3, HIGH);
+    pcfOutput.digitalWrite(P3, HIGH);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1251,6 +1270,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     volumeTotal = 0.0;
     pulseCount = 0;
     saveVolumeToEEPROM();
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1279,7 +1299,8 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     fillingActive = true;
     volumeLlenado = 0.0;
     targetVolume = 9999;
-    //pcfOutput.digitalWrite(P1, LOW);
+    pcfOutput.digitalWrite(P1, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -4138,11 +4159,13 @@ void startFilling() {
   volumeTotal = pulsos / PULSOS_POR_LITRO;
   
   //pcfOutput.digitalWrite(P1, LOW); // Activar bomba
+  saveSystemState();
 }
 
 void stopFilling() {
   fillingActive = false;
   //pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
+  saveSystemState();
 }
 
 void saveVolumeToEEPROM() {
