@@ -851,7 +851,7 @@ void setupWebServer() {
     phControlActive = false;
     if (co2Active && !co2InjectionActive) {
       co2Active = false;
-      pcfOutput.digitalWrite(P3, HIGH);
+      //pcfOutput.digitalWrite(P3, HIGH);
     }
     request->send(200, "text/plain", "OK");
   });
@@ -883,7 +883,7 @@ void setupWebServer() {
             // Inyección única
             co2InjectionActive = true;
             co2StartTime = millis();
-            pcfOutput.digitalWrite(P3, LOW);
+            //pcfOutput.digitalWrite(P3, LOW);
           }
           
           // Guardar en EEPROM
@@ -915,7 +915,7 @@ void setupWebServer() {
     co2InjectionsCompleted = 0;
     co2BucleMode = false;
     co2ScheduleActive = false;
-    pcfOutput.digitalWrite(P3, HIGH);
+    //pcfOutput.digitalWrite(P3, HIGH);
     
     // Limpiar EEPROM
     clearCO2FromEEPROM();
@@ -926,7 +926,7 @@ void setupWebServer() {
   server.on("/api/co2/manual/complete", HTTP_POST, [](AsyncWebServerRequest *request){
   // Llamado cuando una inyección individual termina
   co2InjectionActive = false;
-  pcfOutput.digitalWrite(P3, HIGH);
+  //pcfOutput.digitalWrite(P3, HIGH);
   saveSystemState();
   request->send(200, "text/plain", "OK");
   });
@@ -1217,14 +1217,14 @@ void setupWebServer() {
     // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
-    pcfOutput.digitalWrite(P2, LOW);
+    //pcfOutput.digitalWrite(P2, LOW);
     saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = false;
-    pcfOutput.digitalWrite(P2, HIGH);
+    //pcfOutput.digitalWrite(P2, HIGH);
     saveSystemState();
     request->send(200, "text/plain", "OK");
   });
@@ -1232,14 +1232,14 @@ void setupWebServer() {
   // Control de CO2
   server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = true;
-    pcfOutput.digitalWrite(P3, LOW);
+    //pcfOutput.digitalWrite(P3, LOW);
     saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = false;
-    pcfOutput.digitalWrite(P3, HIGH);
+    //pcfOutput.digitalWrite(P3, HIGH);
     saveSystemState();
     request->send(200, "text/plain", "OK");
   });
@@ -1299,7 +1299,7 @@ void setupWebServer() {
     fillingActive = true;
     volumeLlenado = 0.0;
     targetVolume = 9999;
-    pcfOutput.digitalWrite(P1, LOW);
+    //pcfOutput.digitalWrite(P1, LOW);
     saveSystemState();
     request->send(200, "text/plain", "OK");
   });
