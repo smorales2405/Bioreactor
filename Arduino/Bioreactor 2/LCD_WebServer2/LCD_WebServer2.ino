@@ -2784,7 +2784,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
     for (int i = 0; i < 10; i++) {
       sequences[i].configured = false;
       sequences[i].stepCount = 0;
-      String filename = "/seq_" + String(i + 1) + ".json";
+      String filename = "/Secuencias/seq_" + String(i + 1) + ".json";
       SD.remove(filename);
     }
     lcd.clear();
@@ -4033,7 +4033,7 @@ void loadpHLimit() {
   }
 
 void saveSequence(int seqIndex) {
-  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  String filename = "/Secuencias/seq_" + String(seqIndex + 1) + ".json";
   
   SD.remove(filename);
   
@@ -4071,7 +4071,7 @@ void saveSequence(int seqIndex) {
 }
 
 void loadSequence(int seqIndex) {
-  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  String filename = "/Secuencias/seq_" + String(seqIndex + 1) + ".json";
   
   File file = SD.open(filename, FILE_READ);
   if (!file) {
