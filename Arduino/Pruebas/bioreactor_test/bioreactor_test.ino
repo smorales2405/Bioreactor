@@ -2412,7 +2412,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentMenu = MENU_INTENSITY;
-          menuCursor = pwmValues[selectedLed];
+          menuCursor = 0;
         }
       }
       break;
