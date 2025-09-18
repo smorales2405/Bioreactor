@@ -197,7 +197,7 @@ function initCharts() {
 
    // Gráfico de pH
    const phCtx = document.getElementById('phChart').getContext('2d');
-    phChart = new Chart(ctxPh, {
+    phChart = new Chart(phCtx, {
         type: 'line',
         data: {
             labels: [],
@@ -866,7 +866,7 @@ async function startSequence(id, loop = false) {
         await fetch('/api/sequence/stop', { method: 'POST' });
         
         // Iniciar la nueva secuencia
-        const endpoint = loop ? `/api/sequence/${id}/start/loop` : `/api/sequence/${id}/start`;
+        const endpoint = loop ? `/api/sequence/start/loop/${id}` : `/api/sequence/start/${id}`;
         const response = await fetch(endpoint, { method: 'POST' });
         
         if (response.ok) {
@@ -880,16 +880,6 @@ async function startSequence(id, loop = false) {
         console.error('Error iniciando secuencia:', error);
         alert('Error de conexión');
     }
-}
-
-async function executeSequence(id, mode) {
-   try {
-       // Implementar modo bucle si es necesario
-       await fetch(`/api/sequence/${id}/start`, { method: 'POST' });
-       loadSequences();
-   } catch (error) {
-       console.error('Error ejecutando secuencia:', error);
-   }
 }
 
 async function stopSequence() {
