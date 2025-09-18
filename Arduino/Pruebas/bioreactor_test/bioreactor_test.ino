@@ -1106,22 +1106,6 @@ void setupWebServer() {
     }
   });
   
-  // Iniciar Secuencia una vez
-  server.on("/api/sequence/start/*", HTTP_POST, [](AsyncWebServerRequest *request){
-    String path = request->url();
-    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
-    
-    if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
-      selectedSequence = seqId;
-      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
-      startSequence();
-      Serial.println("Secuencia iniciada 1 vez desde Webserver");
-      request->send(200, "text/plain", "OK");
-    } else {
-      request->send(400, "text/plain", "Invalid sequence or not configured");
-    }
-  });
-
   // Iniciar secuencia en bucle
   server.on("/api/sequence/start/loop/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
@@ -1132,6 +1116,22 @@ void setupWebServer() {
       sequenceLoopMode = true;
       startSequence();
       Serial.println("Secuencia iniciada en loop desde Webserver");
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid sequence or not configured");
+    }
+  });
+
+  // Iniciar Secuencia una vez
+  server.on("/api/sequence/start/*", HTTP_POST, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
+    
+    if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
+      selectedSequence = seqId;
+      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
+      startSequence();
+      Serial.println("Secuencia iniciada 1 vez desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
