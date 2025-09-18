@@ -891,70 +891,101 @@ async function stopSequence() {
    }
 }
 
-function configureSequence(id) {
-   currentSequence = id;
-   document.getElementById('seqNumber').textContent = id + 1;
-   document.getElementById('configModal').style.display = 'block';
-   updateStepsConfig();
+async function configureSequence(id) {
+  currentSequence = id;
+  document.getElementById('seqNumber').textContent = id + 1;
+
+  // 1) Traer la configuración actual
+  let prefill = null;
+  try {
+    const res = await fetch(`/api/sequence/config/${id}`);
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg.configured && Array.isArray(cfg.steps) && cfg.steps.length > 0) {
+        prefill = cfg.steps;   // [{colors:[w,r,g,b], hours, minutes, seconds}, ...]
+      }
+    }
+  } catch (e) {
+    console.error('Error cargando config de secuencia:', e);
+  }
+
+  // 2) Ajustar número de pasos y renderizar con datos existentes
+  const stepCountInput = document.getElementById('stepCount');
+  stepCountInput.value = prefill ? prefill.length : 1;
+
+  updateStepsConfig(prefill);   // <<— pásale los pasos existentes
+
+  // 3) Abrir modal
+  document.getElementById('configModal').style.display = 'block';
 }
 
-function updateStepsConfig() {
-   const stepCount = parseInt(document.getElementById('stepCount').value);
-   const container = document.getElementById('stepsContainer');
-   container.innerHTML = '';
-   
-   for (let i = 0; i < stepCount; i++) {
-       const stepDiv = document.createElement('div');
-       stepDiv.className = 'step-config';
-       stepDiv.innerHTML = `
-           <h4>Paso ${i + 1}</h4>
-           <div class="color-controls">
-               <div class="color-control">
-                   <label>Blanco:</label>
-                   <input type="range" id="step${i}_white" min="0" max="100" value="0">
-                   <span>0</span>
-               </div>
-               <div class="color-control">
-                   <label>Rojo:</label>
-                   <input type="range" id="step${i}_red" min="0" max="100" value="0">
-                   <span>0</span>
-               </div>
-               <div class="color-control">
-                   <label>Verde:</label>
-                   <input type="range" id="step${i}_green" min="0" max="100" value="0">
-                   <span>0</span>
-               </div>
-               <div class="color-control">
-                   <label>Azul:</label>
-                   <input type="range" id="step${i}_blue" min="0" max="100" value="0">
-                   <span>0</span>
-               </div>
-           </div>
-           <div class="time-controls">
-               <div class="time-control">
-                   <label>Horas:</label>
-                   <input type="number" id="step${i}_hours" min="0" max="23" value="0">
-               </div>
-               <div class="time-control">
-                   <label>Minutos:</label>
-                   <input type="number" id="step${i}_minutes" min="0" max="59" value="0">
-               </div>
-               <div class="time-control">
-                   <label>Segundos:</label>
-                   <input type="number" id="step${i}_seconds" min="0" max="59" value="0">
-               </div>
-           </div>
-       `;
-       container.appendChild(stepDiv);
-       
-       // Agregar listeners para actualizar valores
-       stepDiv.querySelectorAll('input[type="range"]').forEach(input => {
-           input.addEventListener('input', function() {
-               this.nextElementSibling.textContent = this.value;
-           });
-       });
-   }
+function updateStepsConfig(prefillSteps = null) {
+  const stepCount = parseInt(document.getElementById('stepCount').value);
+  const container = document.getElementById('stepsContainer');
+  container.innerHTML = '';
+
+  for (let i = 0; i < stepCount; i++) {
+    const s = (prefillSteps && prefillSteps[i]) ? prefillSteps[i] : null;
+    const w = s?.colors?.[0] ?? 0;
+    const r = s?.colors?.[1] ?? 0;
+    const g = s?.colors?.[2] ?? 0;
+    const b = s?.colors?.[3] ?? 0;
+    const h = s?.hours ?? 0;
+    const m = s?.minutes ?? 0;
+    const sec = s?.seconds ?? 0;
+
+    const stepDiv = document.createElement('div');
+    stepDiv.className = 'step-config';
+    stepDiv.innerHTML = `
+      <h4>Paso ${i + 1}</h4>
+      <div class="color-controls">
+        <div class="color-control">
+          <label>Blanco:</label>
+          <input type="range" id="step${i}_white" min="0" max="100" value="${w}">
+          <span>${w}</span>
+        </div>
+        <div class="color-control">
+          <label>Rojo:</label>
+          <input type="range" id="step${i}_red"   min="0" max="100" value="${r}">
+          <span>${r}</span>
+        </div>
+        <div class="color-control">
+          <label>Verde:</label>
+          <input type="range" id="step${i}_green" min="0" max="100" value="${g}">
+          <span>${g}</span>
+        </div>
+        <div class="color-control">
+          <label>Azul:</label>
+          <input type="range" id="step${i}_blue"  min="0" max="100" value="${b}">
+          <span>${b}</span>
+        </div>
+      </div>
+      <div class="time-controls">
+        <div class="time-control">
+          <label>Horas:</label>
+          <input type="number" id="step${i}_hours"   min="0" max="23" value="${h}">
+        </div>
+        <div class="time-control">
+          <label>Minutos:</label>
+          <input type="number" id="step${i}_minutes" min="0" max="59" value="${m}">
+        </div>
+        <div class="time-control">
+          <label>Segundos:</label>
+          <input type="number" id="step${i}_seconds" min="0" max="59" value="${sec}">
+        </div>
+      </div>
+    `;
+    container.appendChild(stepDiv);
+
+    // Listeners para reflejar el valor junto al slider
+    stepDiv.querySelectorAll('input[type="range"]').forEach(input => {
+      input.addEventListener('input', function () {
+        this.nextElementSibling.textContent = this.value;
+      });
+    });
+  }
 }
+
 
 async function saveSequence() {
    const stepCount = parseInt(document.getElementById('stepCount').value);
