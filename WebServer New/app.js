@@ -986,7 +986,6 @@ function updateStepsConfig(prefillSteps = null) {
   }
 }
 
-
 async function saveSequence() {
    const stepCount = parseInt(document.getElementById('stepCount').value);
    const steps = [];
@@ -1030,7 +1029,7 @@ async function deleteSequence(id) {
    if (confirm(`¿Estás seguro de borrar la Secuencia ${id + 1}?`)) {
        try {
            // Aquí deberías implementar el endpoint de borrado en el servidor
-           await fetch(`/api/sequence/${id}/delete`, { method: 'DELETE' });
+           await fetch(`/api/sequence/delete/${id}`, { method: 'DELETE' });
            loadSequences();
        } catch (error) {
            console.error('Error borrando secuencia:', error);

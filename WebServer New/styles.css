@@ -1574,3 +1574,11 @@ h1 {
   text-align: center;
   font-size: 18px;
 }
+
+.sequence-status .btn {
+  flex: 0 0 auto;          /* anula el flex:1 global */
+  width: 220px;            /* tamaño fijo (ajusta a gusto) */
+  /* o usa: min-width: 220px; width: auto; */
+}
+
+.sequence-status { gap: 12px; }

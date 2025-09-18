@@ -1218,6 +1218,47 @@ void setupWebServer() {
       }
     });
 
+  server.on("/api/sequence/delete/*", HTTP_DELETE, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
+
+    if (seqId < 0 || seqId > 9) {
+      request->send(400, "text/plain", "Invalid sequence id");
+      return;
+    }
+
+    if (sequenceRunning && selectedSequence == seqId) {
+      stopSequence();  // idempotente
+    }
+
+    bool removed = false;
+    String seqfilename = "/Secuencias/seq_" + String(seqId+1) + ".json"; 
+
+    if (SD.exists(seqfilename)) {
+      removed = SD.remove(seqfilename);
+    } 
+
+    // 3) Limpiar la estructura en RAM
+    sequences[seqId].configured = false;
+    sequences[seqId].stepCount = 0;
+    for (int s = 0; s < 10; s++) {
+      for (int c = 0; c < 4; c++) sequences[seqId].steps[s].colorIntensity[c] = 0;
+      sequences[seqId].steps[s].hours   = 0;
+      sequences[seqId].steps[s].minutes = 0;
+      sequences[seqId].steps[s].seconds = 0;
+    }
+
+    // 4) Responder
+    if (removed) {
+      Serial.printf("Secuencia %d borrada (archivo eliminado)\n", seqId + 1);
+      request->send(200, "text/plain", "Deleted");
+    } else {
+      // Si no existía el archivo, igual marcamos como no configurada en RAM
+      Serial.printf("Secuencia %d marcada como no configurada (archivo no encontrado)\n", seqId + 1);
+      request->send(200, "text/plain", "No file, state cleared");
+    }
+  });
+
     // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
