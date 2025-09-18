@@ -90,6 +90,7 @@ unsigned long lastEmergencyCheck = 0;
 
 // === Pines PWM LEDS ===
 const int ledPins[] = {4, 26, 16, 25};
+const int ledChannels[] = {1, 2, 3, 4};
 const char* ledNames[] = {"Blanco", "Rojo", "Verde", "Azul"};
 const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
 const int numLeds = 4;
@@ -145,6 +146,7 @@ PCF8574 pcfInput(0x20);
 #define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
 #define EEPROM_AIREACION 312         // 1 byte - estado aireación
 #define EEPROM_CO2 313               // 1 byte - estado CO2
+#define EEPROM_SEQUENCE_STEP_START_TIME 314
 
 // Agregar direcciones EEPROM para límites de temperatura
 #define EEPROM_TEMP_MIN 170  // Float (4 bytes)
@@ -309,6 +311,7 @@ int currentSequenceStep = 0;
 // === Variables de tiempo para la secuencia ===
 DateTime sequenceStartTime;
 DateTime stepStartTime;
+uint32_t SavedStepStartTime = 0;
 volatile bool rtcInterrupt = false;
 
 // Variables para encoder con interrupciones
@@ -400,12 +403,13 @@ void setup() {
 
   // Configurar PWM para cada LED
   for (int i = 0; i < numLeds; i++) {
-    ledcAttach(ledPins[i], pwmFreq, pwmResolution);
+    ledcAttachChannel(ledPins[i], pwmFreq, pwmResolution, ledChannels[i]);
     ledcWrite(ledPins[i], 0);
   }
-  
+  Serial.println("Leds Inicializados");
+
   //Buzzer
-  ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
+  ledcAttachChannel(BUZZER_PIN, 2000, pwmResolution, 5); // 2kHz frecuencia, 8 bits resolución
   ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
 
   // Inicializar RTC
@@ -580,6 +584,10 @@ void saveSystemState() {
   EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
   EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
+  SavedStepStartTime = stepStartTime.unixtime();
+  Serial.print("Guardando tiempo de Secuencia: ");
+  Serial.println(SavedStepStartTime);
+  EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
   
   // Guardar estados de aireación y CO2
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
@@ -592,8 +600,30 @@ void saveSystemState() {
 }
 
 void loadSystemState() {
-  // Cargar estados de LEDs
-  for (int i = 0; i < 4; i++) {
+  
+  // Cargar estado de secuencia
+  bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
+  if (wasSequenceRunning) {
+    selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
+    currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
+    sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
+    EEPROM.get(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
+    stepStartTime = DateTime(SavedStepStartTime);
+
+    // Verificar si la secuencia es válida antes de reanudar
+    if (selectedSequence < 10 && sequences[selectedSequence].configured) {
+      sequenceRunning = true;
+      //stepStartTime = rtc.now();
+      applySequenceStep(currentSequenceStep);
+      Serial.print("Reanudando Secuencia ");
+      Serial.print(selectedSequence + 1);
+      Serial.print(" Paso ");
+      Serial.print(currentSequenceStep + 1);
+      Serial.println(" tras reinicio");
+    }
+  } else {
+      // Cargar estados de LEDs
+    for (int i = 0; i < 4; i++) {
     ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
     pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
     
@@ -602,23 +632,8 @@ void loadSystemState() {
       int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
       ledcWrite(ledPins[i], pwmValue);
     }
-  }
-  
-  // Cargar estado de secuencia
-  bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
-  if (wasSequenceRunning) {
-    selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
-    currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
-    sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
-    
-    // Verificar si la secuencia es válida antes de reanudar
-    if (selectedSequence < 10 && sequences[selectedSequence].configured) {
-      sequenceRunning = true;
-      //stepStartTime = rtc.now();
-      checkSequenceProgress();
-      
-      Serial.println("Reanudando secuencia tras reinicio");
     }
+    Serial.println("Intensidades aplicados a LEDs - No Secuencia");
   }
   
   // Cargar y aplicar estados de aireación y CO2
@@ -1091,16 +1106,16 @@ void setupWebServer() {
     }
   });
   
-  server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
+  // Iniciar Secuencia una vez
+  server.on("/api/sequence/start/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
       sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
       startSequence();
+      Serial.println("Secuencia iniciada 1 vez desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
@@ -1108,16 +1123,15 @@ void setupWebServer() {
   });
 
   // Iniciar secuencia en bucle
-  server.on("/api/sequence/*/start/loop", HTTP_POST, [](AsyncWebServerRequest *request){
+  server.on("/api/sequence/start/loop/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
       sequenceLoopMode = true;
       startSequence();
+      Serial.println("Secuencia iniciada en loop desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
@@ -1128,6 +1142,7 @@ void setupWebServer() {
   server.on("/api/sequence/stop", HTTP_POST, [](AsyncWebServerRequest *request){
     if (sequenceRunning) {
       stopSequence();
+      Serial.println("Secuencia detenida desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "No sequence running");
@@ -1764,6 +1779,7 @@ void incrementCursor() {
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
+        Serial.println("Intensidad aplicada a LED");
       }
       break;
       
@@ -1980,6 +1996,7 @@ void decrementCursor() {
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
+        Serial.println("Intensidad aplicada a LED");
       }
       break;
       
@@ -2446,11 +2463,13 @@ void handleSelection() {
         ledStates[selectedLed] = true;
         pwmValues[selectedLed] = 20;  // AGREGAR ESTA LÍNEA
         ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
+        Serial.println("Prender LED");
       } else {
         // OFF
         ledStates[selectedLed] = false;
         pwmValues[selectedLed] = 0;
         ledcWrite(ledPins[selectedLed], 0);
+        Serial.println("Apagar LED");
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
@@ -2462,6 +2481,7 @@ void handleSelection() {
       ledStates[selectedLed] = (menuCursor > 0);
       //int pwmValue = map(intensity, 0, 100, 0, 255);
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
+      Serial.println("Intensidad aplicada a LED");
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
       saveSystemState();
@@ -2542,6 +2562,7 @@ void handleSelection() {
         } else {
           for (int i = 0; i < numLeds; i++) {
             ledcWrite(ledPins[i], 0);
+            Serial.println("Apagar LED en configuración");
           }
           menuCursor = 0;
         }
@@ -2625,6 +2646,7 @@ void handleSelection() {
       if (menuCursor == 0) {
         for (int i = 0; i < numLeds; i++) {
           ledcWrite(ledPins[i], 0);
+          Serial.println("Apagar LEDs luego de configuración");
         }
         currentMenu = MENU_SEQ_LIST;
         menuCursor = selectedSequence;
@@ -3868,10 +3890,12 @@ void updateColorPreview() {
     
     int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
+    Serial.println("Prender LED en Color Preview");
   }
   
   for (int i = currentColorConfig + 1; i < numLeds; i++) {
     ledcWrite(ledPins[i], 0);
+    Serial.println("Apagar LED en Color Preview");
   }
 }
 
@@ -3883,6 +3907,7 @@ void setLED(int index, bool state, int intensity) {
   
   int pwmValue = map(intensity, 0, 100, 0, 255);
   ledcWrite(ledPins[index], state ? pwmValue : 0);
+  Serial.println("Prender LED en Webserver");
   
   // Actualizar LCD si estamos en el menú correspondiente
   if (currentMenu == MENU_LED_SELECT || currentMenu == MENU_ONOFF || currentMenu == MENU_INTENSITY) {
@@ -3906,7 +3931,9 @@ void startSequence() {
   for (int i = 0; i < numLeds; i++) {
     ledcWrite(ledPins[i], 0);
   }
-  
+  Serial.println("Apagar LEDs para iniciar Secuencia");
+  delay(100);
+
   applySequenceStep(0);
   currentMenu = MENU_SEQ_RUNNING;
   
@@ -3930,27 +3957,43 @@ void stopSequence() {
 }
 
 void applySequenceStep(int step) {
+
+  Serial.print("Secuencia ");
+  Serial.print(selectedSequence + 1);
+  Serial.print(" Paso ");
+  Serial.print(step + 1);
+  Serial.print(": ");
+
   for (int i = 0; i < 4; i++) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
     int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
+    delay(100);
     ledStates[i] = intensity > 0;
     pwmValues[i] = intensity/5;
+
+    Serial.print(ledNames[i]);
+    Serial.print(":");
+    Serial.print(ledcRead(ledPins[i]));
+    Serial.print(" ");
     
-    if (intensity > 0) {
-      Serial.print(ledNames[i]);
-      Serial.print(":");
-      Serial.print(intensity * 10);
-      Serial.print("% ");
-    }
   }
   Serial.println();
+  saveSystemState();
 }
 
 void checkSequenceProgress() {
   if (!sequenceRunning) return;
   
   DateTime now = rtc.now();
+  //Serial.print("Tiempo actual: ");
+  String dataLine1 = String(now.year()) + "/" + String(now.month()) + "/" + String(now.day()) + ", ";
+  dataLine1 += String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second());
+  //Serial.print(dataLine1);
+  //Serial.print(" / Tiempo de Inicio: ");
+  String dataLine2 = String(stepStartTime.year()) + "/" + String(stepStartTime.month()) + "/" + String(stepStartTime.day()) + ", ";
+  dataLine2 += String(stepStartTime.hour()) + ":" + String(stepStartTime.minute()) + ":" + String(stepStartTime.second());
+  //Serial.println(dataLine2);
   TimeSpan elapsed = now - stepStartTime;
   
   int totalSeconds = sequences[selectedSequence].steps[currentSequenceStep].hours * 3600 + 
@@ -3958,13 +4001,19 @@ void checkSequenceProgress() {
                      sequences[selectedSequence].steps[currentSequenceStep].seconds;
   int elapsedSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
                        elapsed.minutes() * 60 + elapsed.seconds();
-  
+  //Serial.print("Segundos transcurridos: ");
+  //Serial.print(elapsedSeconds);
+  //Serial.print(" / Segundos totales: ");
+  //Serial.println(totalSeconds);
+
   if (elapsedSeconds >= totalSeconds) {
     for (int i = 0; i < numLeds; i++) {
       ledcWrite(ledPins[i], 0);
+      Serial.println("Apagar secuencia por tiempo");
     }
     
     currentSequenceStep++;
+    Serial.println("Siguiente Step en Secuencia");
     
     if (currentSequenceStep >= sequences[selectedSequence].stepCount) {
       if (sequenceLoopMode) {
@@ -5700,7 +5749,7 @@ void checkAlarms() {
           tempAlarmLogged = true;  // Marcar como registrada
           Serial.println("ALARMA: Temperatura fuera de límites - Registrada en SD");
         } else {
-          Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
+          //Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
         }
       }
     }
@@ -5728,7 +5777,7 @@ void checkAlarms() {
         phAlarmLogged = true;  // Marcar como registrada
         Serial.println("ALARMA: pH bajo el límite - Registrada en SD");
       } else {
-        Serial.println("ALARMA: pH bajo el límite - Ya registrada");
+        //Serial.println("ALARMA: pH bajo el límite - Ya registrada");
       }
     }
   }
@@ -5844,7 +5893,8 @@ void handleEmergencyState() {
       //pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
       ledcWrite(ledPins[i], 0);        // LEDs PWM
     }
-    
+    Serial.println("Secuencias apagadas por Emergencia");
+
     // Detener llenado y aireación si están activos
     fillingActive = false;
     aireacionActive = false;

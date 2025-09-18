@@ -90,6 +90,7 @@ unsigned long lastEmergencyCheck = 0;
 
 // === Pines PWM LEDS ===
 const int ledPins[] = {4, 26, 16, 25};
+const int ledChannels[] = {1, 2, 3, 4};
 const char* ledNames[] = {"Blanco", "Rojo", "Verde", "Azul"};
 const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
 const int numLeds = 4;
@@ -145,6 +146,7 @@ PCF8574 pcfOutput(0x21);
 #define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
 #define EEPROM_AIREACION 312         // 1 byte - estado aireación
 #define EEPROM_CO2 313               // 1 byte - estado CO2
+#define EEPROM_SEQUENCE_STEP_START_TIME 314
 
 // Agregar direcciones EEPROM para límites de temperatura
 #define EEPROM_TEMP_MIN 170  // Float (4 bytes)
@@ -309,6 +311,7 @@ int currentSequenceStep = 0;
 // === Variables de tiempo para la secuencia ===
 DateTime sequenceStartTime;
 DateTime stepStartTime;
+uint32_t SavedStepStartTime = 0;
 volatile bool rtcInterrupt = false;
 
 // Variables para encoder con interrupciones
@@ -398,12 +401,12 @@ void setup() {
   
   // Configurar PWM para cada LED
   for (int i = 0; i < numLeds; i++) {
-    ledcAttach(ledPins[i], pwmFreq, pwmResolution);
+    ledcAttachChannel(ledPins[i], pwmFreq, pwmResolution, ledChannels[i]);
     ledcWrite(ledPins[i], 0);
   }
   
   //Buzzer
-  ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
+  ledcAttachChannel(BUZZER_PIN, 2000, pwmResolution, 5); // 2kHz frecuencia, 8 bits resolución
   ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
 
   // Inicializar RTC
@@ -576,7 +579,9 @@ void saveSystemState() {
   EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
   EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
-  
+  SavedStepStartTime = stepStartTime.unixtime();
+  EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
+
   // Guardar estados de aireación y CO2
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
   EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
@@ -588,17 +593,6 @@ void saveSystemState() {
 }
 
 void loadSystemState() {
-  // Cargar estados de LEDs
-  for (int i = 0; i < 4; i++) {
-    ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
-    pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
-    
-    // Aplicar valores a los LEDs
-    if (ledStates[i]) {
-      int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
-      ledcWrite(ledPins[i], pwmValue);
-    }
-  }
   
   // Cargar estado de secuencia
   bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
@@ -606,15 +600,29 @@ void loadSystemState() {
     selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
     currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
     sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
+    EEPROM.get(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
+    stepStartTime = DateTime(SavedStepStartTime);
     
     // Verificar si la secuencia es válida antes de reanudar
     if (selectedSequence < 10 && sequences[selectedSequence].configured) {
       sequenceRunning = true;
       //stepStartTime = rtc.now();
-      checkSequenceProgress();
+      applySequenceStep(currentSequenceStep);
       
       Serial.println("Reanudando secuencia tras reinicio");
     }
+  } else {
+      // Cargar estados de LEDs
+      for (int i = 0; i < 4; i++) {
+        ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
+        pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
+        
+        // Aplicar valores a los LEDs
+        if (ledStates[i]) {
+          int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
+          ledcWrite(ledPins[i], pwmValue);
+        }
+      }
   }
   
   // Cargar y aplicar estados de aireación y CO2
@@ -1087,16 +1095,16 @@ void setupWebServer() {
     }
   });
   
-  server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
+  // Iniciar Secuencia una vez
+  server.on("/api/sequence/start/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
       sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
       startSequence();
+      Serial.println("Secuencia iniciada 1 vez desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
@@ -1104,16 +1112,15 @@ void setupWebServer() {
   });
 
   // Iniciar secuencia en bucle
-  server.on("/api/sequence/*/start/loop", HTTP_POST, [](AsyncWebServerRequest *request){
+  server.on("/api/sequence/start/loop/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
       sequenceLoopMode = true;
       startSequence();
+      Serial.println("Secuencia iniciada en loop desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
@@ -1124,6 +1131,7 @@ void setupWebServer() {
   server.on("/api/sequence/stop", HTTP_POST, [](AsyncWebServerRequest *request){
     if (sequenceRunning) {
       stopSequence();
+      Serial.println("Secuencia detenida desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "No sequence running");
@@ -3930,17 +3938,18 @@ void applySequenceStep(int step) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
     int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
+    delay(100);
     ledStates[i] = intensity > 0;
     pwmValues[i] = intensity/5;
     
-    if (intensity > 0) {
-      Serial.print(ledNames[i]);
-      Serial.print(":");
-      Serial.print(intensity * 10);
-      Serial.print("% ");
-    }
+    Serial.print(ledNames[i]);
+    Serial.print(":");
+    Serial.print(ledcRead(ledPins[i]));
+    Serial.print(" ");
+
   }
   Serial.println();
+  saveSystemState();
 }
 
 void checkSequenceProgress() {
@@ -4161,7 +4170,7 @@ void startFilling() {
 void stopFilling() {
   fillingActive = false;
   pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
-  saveSystemState()
+  saveSystemState();
 }
 
 void saveVolumeToEEPROM() {
