@@ -1034,7 +1034,7 @@ void setupWebServer() {
   });
   
   // Estado de todos los LEDs
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/leds/status", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
     for (int i = 0; i < numLeds; i++) {
       json += "\"" + String(ledNamesWeb[i]) + "\":{";
@@ -1063,7 +1063,7 @@ void setupWebServer() {
   });
   
   // Detalles de una secuencia
-  server.on("/api/sequence/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/api/sequence/config/*", HTTP_GET, [](AsyncWebServerRequest *request){
     String path = request->url();
     int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     

@@ -1045,7 +1045,7 @@ void setupWebServer() {
   });
   
   // Estado de todos los LEDs
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/leds/status", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
     for (int i = 0; i < numLeds; i++) {
       json += "\"" + String(ledNamesWeb[i]) + "\":{";
@@ -1074,7 +1074,7 @@ void setupWebServer() {
   });
   
   // Detalles de una secuencia
-  server.on("/api/sequence/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/api/sequence/config/*", HTTP_GET, [](AsyncWebServerRequest *request){
     String path = request->url();
     int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
@@ -1105,7 +1105,7 @@ void setupWebServer() {
       request->send(400, "text/plain", "Invalid sequence ID");
     }
   });
-  
+
   // Iniciar secuencia en bucle
   server.on("/api/sequence/start/loop/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
@@ -1176,6 +1176,7 @@ void setupWebServer() {
       json += ",\"totalSeconds\":" + String(sequences[selectedSequence].steps[currentSequenceStep].seconds);
     }
     json += "}";
+    Serial.printf("STATUS running=%d, loop=%d, sel=%d step=%d\n", sequenceRunning, sequenceLoopMode, selectedSequence, currentSequenceStep);
     request->send(200, "application/json", json);
   });
   
@@ -1229,7 +1230,7 @@ void setupWebServer() {
       }
     });
 
-    // Control de Aireación
+  // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
     //pcfOutput.digitalWrite(P2, LOW);
