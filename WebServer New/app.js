@@ -763,7 +763,7 @@ async function allLedsOff() {
 // Actualizar estado de LEDs
 async function updateLedStatus() {
    try {
-       const response = await fetch(`/status`);
+       const response = await fetch(`/leds/status`);
        const data = await response.json();
        
        // Actualizar sliders e indicadores
