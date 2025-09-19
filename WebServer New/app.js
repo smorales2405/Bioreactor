@@ -39,7 +39,7 @@ let co2NextInjectionTimer = null;
 let co2DailyStartTime = null;
 
 // Configuración de actualización
-const UPDATE_INTERVAL = 2000; // 2 segundos
+const UPDATE_INTERVAL = 1000; // 1 segundo
 
 // Variables para límites y alarmas
 let tempLimits = { min: 18, max: 28 };

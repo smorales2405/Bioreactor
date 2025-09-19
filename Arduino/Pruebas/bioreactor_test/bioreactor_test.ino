@@ -1,3 +1,6 @@
+/**********************************
+ *  INCLUDES
+ **********************************/
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -12,204 +15,291 @@
 #include <EEPROM.h>
 #include <PCF8574.h>
 
-// === Configuración WiFi ===
-const char* ap_ssid = "Bioreactor2";
+/**********************************
+ *  1) WEBSERVER (WiFi)
+ **********************************/
+const char* ap_ssid     = "Bioreactor2";
 const char* ap_password = "bioreactor2";
+AsyncWebServer server(80);
 
-// === LCD 20x4 ===
+/**********************************
+ *  2) MÓDULOS (RTC, ADS, LCD, Encoder, PCF8574)
+ **********************************/
+// LCD 20x4 (I2C)
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// === RTC DS3231 ===
+// RTC DS3231
 RTC_DS3231 rtc;
+#define SQW_PIN 17  // Pin SQW del RTC
 
-// === Sensores ===
-Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
+// ADC (pH / turbidez / señales analógicas)
 Adafruit_ADS1115 ads;
 
+// Termómetro PT100 con MAX31865 (SPI por software)
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
 #define RREF      430.0
 #define RNOMINAL  100.0
 
-// === Pines del encoder ===
+// PCF8574 (I2C)
+PCF8574 pcfInput(0x20);
+PCF8574 pcfOutput(0x21);
+
+// Encoder rotatorio
 #define ENCODER_CLK 34
 #define ENCODER_DT  35
 #define ENCODER_SW  32
 
-// === Pin del Boton Emergencia ===
-#define EMERGENCY_PIN 39
+// Estado de encoder (polling e interrupción)
+int lastClk = HIGH;
+unsigned long lastButtonPress = 0;
+unsigned long lastExtraButtonPress = 0;
+const unsigned long debounceDelay = 500;
 
-#define BUZZER_PIN 33  // Pin PWM para el buzzer
-
-// === Pin SQW del RTC ===
-#define SQW_PIN 17
-
-// Flujometro
-#define FLOW_SENSOR_PIN 36
-#define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
-#define PULSOS_POR_LITRO 450
-
-// Variables para control de alarmas
-bool alarmActive = false;
-bool tempAlarm = false;
-bool phAlarm = false;
-bool emergencyAlarm = false;
-//unsigned long lastAlarmCheck = 0;
-//const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
-bool alarmSilenced = false;
-bool tempWasNormal = false;
-bool phWasNormal = false;
-bool alarmWasSilenced = false;
-// Flags para evitar registro duplicado de alarmas
-bool tempAlarmLogged = false;  // Indica si ya se registró alarma de temperatura
-bool phAlarmLogged = false;    // Indica si ya se registró alarma de pH
-bool emergencyAlarmLogged = false;
-
-#define MAX_ALARM_HISTORY 100
-#define ALARM_LOG_FILE "Log/alarm_log.txt"
-struct AlarmRecord {
-  char timestamp[20];
-  char type[30];
-  float value;
-};
-
-// Variables de flujo
-volatile unsigned long pulseCount = 0;
-float volumeTotal = 0.0;
-float volumeLlenado = 0.0;
-float targetVolume = 0.0;
-bool fillingActive = false;
-unsigned long lastFlowCheck = 0;
-
-//Aireacion
-bool aireacionActive = false;
-bool co2Active = false;
-
-bool sequenceLoopMode = false;
-
-volatile bool emergencyActive = false;
-unsigned long lastEmergencyCheck = 0;
-
-// === Pines PWM LEDS ===
-const int ledPins[] = {4, 26, 16, 25};
-const int ledChannels[] = {1, 2, 3, 4};
-const char* ledNames[] = {"Blanco", "Rojo", "Verde", "Azul"};
-const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
-const int numLeds = 4;
-
-// === microSD SPI ===
+// Modulo SD
 SPIClass sdSPI(VSPI);
 #define SD_CS   27
 #define SD_MOSI 13
 #define SD_MISO 12
 #define SD_SCK  14
 
-// === Variables de estado ===
-int selectedLed = 0;
-int selectedAction = 0;
-int pwmValues[4] = {0, 0, 0, 0};
-bool ledStates[4] = {false, false, false, false};
+/**********************************
+ *  3) LEDS (PWM, Secuencias)
+ **********************************/
+// Pines, canales y metadatos
+const int  ledPins[]     = {4, 26, 16, 25};
+const int  ledChannels[] = {1, 2, 3, 4};
+const char* ledNames[]   = {"Blanco", "Rojo", "Verde", "Azul"};
+const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
+const int  numLeds = 4;
 
-// === Variables del encoder ===
-int lastClk = HIGH;
-unsigned long lastButtonPress = 0;
-unsigned long lastExtraButtonPress = 0;
-const unsigned long debounceDelay = 500;
+// Estado manual
+int  selectedLed = 0;
+int  selectedAction = 0;
+int  pwmValues[4]  = {0, 0, 0, 0};
+bool ledStates[4]  = {false, false, false, false};
 
-// Instancias PCF8574
-PCF8574 pcfInput(0x20);
-//PCF8574 pcfOutput(0x21);
+// PWM
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
 
-// Direcciones EEPROM para turbidez
-#define EEPROM_TURB_MUESTRA1_V 100  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA1_C 104  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA2_V 108  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA2_C 112  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA3_V 116  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA3_C 120  // Float (4 bytes)
-#define EEPROM_TURB_COEF_A 124      // Float (4 bytes)
-#define EEPROM_TURB_COEF_B 128      // Float (4 bytes)
-#define EEPROM_TURB_COEF_C 132      // Float (4 bytes)
+// Secuencias
+struct SequenceStep {
+  int colorIntensity[4];
+  int hours;
+  int minutes;
+  int seconds;
+};
 
-// Direcciones EEPROM para pH
-#define EEPROM_PH_MUESTRA1_V 140  // Float (4 bytes)
-#define EEPROM_PH_MUESTRA1_PH 144 // Float (4 bytes)
-#define EEPROM_PH_MUESTRA2_V 148  // Float (4 bytes)
-#define EEPROM_PH_MUESTRA2_PH 152 // Float (4 bytes)
-#define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
-#define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
+struct Sequence {
+  bool configured;
+  int  stepCount;
+  SequenceStep steps[10];
+};
 
-// Direcciones EEPROM para estado del sistema
-#define EEPROM_SEQUENCE_LOOP 300      // 1 byte - flags de estado
-#define EEPROM_LED_STATES 301        // 4 bytes - estados de LEDs
-#define EEPROM_LED_PWM 305           // 4 bytes - valores PWM
-#define EEPROM_SEQUENCE_RUNNING 309  // 1 byte - secuencia activa
-#define EEPROM_SEQUENCE_ID 310       // 1 byte - ID de secuencia
-#define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
-#define EEPROM_AIREACION 312         // 1 byte - estado aireación
-#define EEPROM_CO2 313               // 1 byte - estado CO2
-#define EEPROM_SEQUENCE_STEP_START_TIME 314
+Sequence sequences[10];
+int   selectedSequence   = 0;
+int   currentConfigStep  = 0;
+int   currentColorConfig = 0;
+bool  sequenceRunning    = false;
+bool  sequenceLoopMode   = false;
+int   currentSequenceStep = 0;
 
-// Agregar direcciones EEPROM para límites de temperatura
-#define EEPROM_TEMP_MIN 170  // Float (4 bytes)
-#define EEPROM_TEMP_MAX 174  // Float (4 bytes)
+// Tiempos de secuencias
+DateTime  sequenceStartTime;
+DateTime  stepStartTime;
+uint32_t  SavedStepStartTime = 0;
+volatile bool rtcInterrupt   = false;
 
-#define EEPROM_PH_LIMIT_MIN 178  // float (4 bytes)
+/**********************************
+ *  4) SENSORES (Temperatura, pH, Turbidez/Concentración, Flujo)
+ **********************************/
+// Lecturas/estado de sensores
+float temperature      = 0.0;
+float phValue          = 0.0;
+float turbidityMCmL    = 0.0;
+unsigned long lastSensorRead = 0;
+const unsigned long sensorReadInterval = 1000; // ms
 
-#define EEPROM_CO2_MINUTES         180  // uint16_t (2 bytes) -> 180–181
-#define EEPROM_CO2_TIMES           182  // uint16_t (2 bytes) -> 182–183
-#define EEPROM_CO2_BUCLE           184  // uint8_t  (1 byte)  -> 184
-#define EEPROM_CO2_ACTIVE          185  // uint8_t  (1 byte)  -> 185
-#define EEPROM_CO2_INJECTIONS_DONE 186  // uint16_t (2 bytes) -> 186–187
-#define EEPROM_CO2_REMAINING_SEC   188  // uint32_t (4 bytes) -> 188–191
-#define EEPROM_INIT_FLAG           192  // uint8_t  (1 byte)  -> 192
-#define EEPROM_MAGIC_NUMBER        0xAA // (constante, NO es dirección)
+// Calibración pH (lecturas y modelo)
+float phMuestra1V = 0.0, phMuestra1pH = 0.0;
+float phMuestra2V = 0.0, phMuestra2pH = 0.0;
+float phCoefM = 0.0, phCoefB = 0.0;
+int   phCalibValue = 7;       // valor temporal (neutro)
+int   selectedPhMuestra = 0;  // 0= M1, 1= M2
+float calibrationValue = 0.0;
+int   calibrationStep  = 0;
 
-// Variables para calibración de turbidez
+// Calibración Turbidez/Concentración
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
 float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
 float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
-int turbCalibValue = 0;  // Valor temporal para calibración
-int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
-float tempVoltageReading = 0.0; // Voltaje temporal actual
-int tempConcentrationValue = 0; // Concentración temporal para editar
+int   turbCalibValue = 0;
+int   selectedMuestra = 0;
+float tempVoltageReading = 0.0;
+int   tempConcentrationValue = 0;
 
-// Variables para calibración de pH
-float phMuestra1V = 0.0, phMuestra1pH = 0.0;
-float phMuestra2V = 0.0, phMuestra2pH = 0.0;
-float phCoefM = 0.0, phCoefB = 0.0;
-int phCalibValue = 7;  // Valor temporal para calibración (iniciar en pH neutro)
-int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
+// Límites de temperatura (edición/visual)
+float tempLimitMin = 18.0;
+float tempLimitMax = 28.0;
+float tempEditValue = 0.0;
+bool  editingMin = true;
 
-// Variables para almacenamiento de datos
-bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
-unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
-unsigned long logInterval = 5000; // 5 segundos en milisegundos (configurable)
-int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
+// Flujómetro (volumen/llenado)
+#define FLOW_SENSOR_PIN 36
+#define PULSOS_POR_LITRO 450
+volatile unsigned long pulseCount = 0;
+float volumeTotal   = 0.0;
+float volumeLlenado = 0.0;
+float targetVolume  = 0.0;
+bool  fillingActive = false;
+unsigned long lastFlowCheck = 0;
 
-// Variables para límites de temperatura
-float tempLimitMin = 18.0;  // Valor por defecto
-float tempLimitMax = 28.0;  // Valor por defecto
-float tempEditValue = 0.0;  // Valor temporal para edición
-bool editingMin = true;      // Flag para saber qué límite se está editando
+/**********************************
+ *  5) AIREACIÓN
+ **********************************/
+bool aireacionActive = false;
 
-// Direcciones EEPROM para configuración de logging
+/**********************************
+ *  6) CONTROL CO2
+ **********************************/
+bool  co2Active = false;        // estado general CO2 (UI)
+float phLimitSet   = 7.0;       // punto de control
+float phLimitMin   = 4.0;       // límite inferior (alarma/registro)
+bool  phControlActive     = false; // automático activo
+bool  co2InjectionActive  = false; // inyección manual activa
+
+int   co2MinutesSet       = 0;
+int   co2MinutesRemaining = 0;
+unsigned long co2StartTime = 0;
+
+int   co2TimesPerDay      = 0;
+int   co2TimesSet         = 0;
+int   co2InjectionsCompleted = 0;
+bool  co2BucleMode        = false;
+
+unsigned long co2NextInjectionTime = 0;
+unsigned long co2IntervalMs        = 0;
+bool  co2ScheduleActive            = false;
+unsigned long co2DailyStartTime    = 0;
+
+/**********************************
+ *  7) ALARMAS (temperatura, pH, emergencia, buzzer)
+ **********************************/
+#define EMERGENCY_PIN 39
+#define BUZZER_PIN    33
+
+bool alarmActive        = false;
+bool tempAlarm          = false;
+bool phAlarm            = false;
+bool emergencyAlarm     = false;
+// unsigned long lastAlarmCheck = 0;
+// const unsigned long alarmCheckInterval = 500;
+bool alarmSilenced      = false;
+bool tempWasNormal      = false;
+bool phWasNormal        = false;
+bool alarmWasSilenced   = false;
+
+// Flags para evitar duplicados en log
+bool tempAlarmLogged      = false;
+bool phAlarmLogged        = false;
+bool emergencyAlarmLogged = false;
+
+volatile bool   emergencyActive = false;
+unsigned long   lastEmergencyCheck = 0;
+
+// Historial de alarmas
+#define MAX_ALARM_HISTORY 100
+#define ALARM_LOG_FILE "/Log/alarm_log.txt"
+struct AlarmRecord {
+  char  timestamp[20];
+  char  type[30];
+  float value;
+};
+
+/**********************************
+ *  8) DIRECCIONES EEPROM
+ **********************************/
+// Volumen (llenado)
+#define EEPROM_VOLUME_ADDR 4    // float (4 bytes)
+
+// Turbidez (calibración)
+#define EEPROM_TURB_MUESTRA1_V 100
+#define EEPROM_TURB_MUESTRA1_C 104
+#define EEPROM_TURB_MUESTRA2_V 108
+#define EEPROM_TURB_MUESTRA2_C 112
+#define EEPROM_TURB_MUESTRA3_V 116
+#define EEPROM_TURB_MUESTRA3_C 120
+#define EEPROM_TURB_COEF_A     124
+#define EEPROM_TURB_COEF_B     128
+#define EEPROM_TURB_COEF_C     132
+
+// pH (calibración y modelo)
+#define EEPROM_PH_MUESTRA1_V   140
+#define EEPROM_PH_MUESTRA1_PH  144
+#define EEPROM_PH_MUESTRA2_V   148
+#define EEPROM_PH_MUESTRA2_PH  152
+#define EEPROM_PH_COEF_M       156
+#define EEPROM_PH_COEF_B       160
+
+// Límites de temperatura
+#define EEPROM_TEMP_MIN 170   // float
+#define EEPROM_TEMP_MAX 174   // float
+
+// Límite inferior pH
+#define EEPROM_PH_LIMIT_MIN 178 // float
+
+// CO2 (programación/estado)
+#define EEPROM_CO2_MINUTES         180  // uint16_t (180–181)
+#define EEPROM_CO2_TIMES           182  // uint16_t (182–183)
+#define EEPROM_CO2_BUCLE           184  // uint8_t
+#define EEPROM_CO2_ACTIVE          185  // uint8_t
+#define EEPROM_CO2_INJECTIONS_DONE 186  // uint16_t (186–187)
+#define EEPROM_CO2_REMAINING_SEC   188  // uint32_t (188–191)
+#define EEPROM_INIT_FLAG           192  // uint8_t
+#define EEPROM_MAGIC_NUMBER        0xAA // constante
+
+// Estado del sistema (LEDs y secuencias)
+#define EEPROM_SEQUENCE_LOOP                  300   // 1 byte
+#define EEPROM_LED_STATES                     301   // 4 bytes
+#define EEPROM_LED_PWM                        305   // 4 bytes
+#define EEPROM_SEQUENCE_RUNNING               309   // 1 byte
+#define EEPROM_SEQUENCE_ID                    310   // 1 byte
+#define EEPROM_SEQUENCE_STEP                  311   // 1 byte
+#define EEPROM_AIREACION                      312   // 1 byte
+#define EEPROM_CO2                            313   // 1 byte
+#define EEPROM_SEQUENCE_STEP_START_TIME       314   // uint32_t
+
+// Logging (config general)
 #define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
 
-// === Estados del menú ===
+/**********************************
+ *  9) ALMACENAMIENTO EN SD
+ **********************************/
+
+// Variables para almacenamiento/registro
+bool           dataLogging[4]   = {false, false, false, false};
+unsigned long  lastLogTime[4]   = {0, 0, 0, 0};
+unsigned long  logInterval      = 5000; // ms
+int            selectedDataType = 0;    // 0–3
+
+/**********************************
+ *  10) INTERFAZ (MENÚ / PANTALLA)
+ **********************************/
 enum MenuState {
-  MENU_MAIN,           
+  MENU_MAIN,
   MENU_SENSORS,
   MENU_TEMP_LIMITS,
   MENU_TEMP_SET_MIN,
   MENU_TEMP_SET_MAX,
-  MENU_TEMP_CONFIRM_SAVE,        
-  MENU_SENSOR_PH,      
+  MENU_TEMP_CONFIRM_SAVE,
+  MENU_SENSOR_PH,
   MENU_PH_CALIBRATION_MENU,
   MENU_PH_SET_MUESTRA,
   MENU_PH_CONFIRM_MUESTRA,
   MENU_PH_CALIBRATING,
-  MENU_PH_PANEL,              // Panel principal de pH
-  MENU_PH_SET_LIMIT,          // Configurar pH límite
+  MENU_PH_PANEL,
+  MENU_PH_SET_LIMIT,
   MENU_SENSOR_TURBIDEZ,
   MENU_TURB_CALIBRATION,
   MENU_TURB_SET_MUESTRA,
@@ -220,10 +310,10 @@ enum MenuState {
   MENU_TURB_CONFIRM_VOLTAGE,
   MENU_TURB_SET_CONCENTRATION,
   MENU_TURB_CONFIRM_CONCENTRATION,
-  MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
-  MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
-  MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
-  MENU_ACTION,         
+  MENU_PH_MANUAL_CO2,
+  MENU_PH_MANUAL_CO2_CONFIRM,
+  MENU_PH_MANUAL_CO2_ACTIVE,
+  MENU_ACTION,
   MENU_LED_SELECT,
   MENU_ONOFF,
   MENU_INTENSITY,
@@ -232,9 +322,9 @@ enum MenuState {
   MENU_SEQ_CONFIG_CANTIDAD,
   MENU_SEQ_CONFIG_COLOR,
   MENU_SEQ_CONFIG_TIME,
-  MENU_SEQ_CONFIG_TIME_CONFIRM, 
-  MENU_SEQ_EXECUTION_MODE,       
-  MENU_SEQ_DELETE_ALL_CONFIRM,  
+  MENU_SEQ_CONFIG_TIME_CONFIRM,
+  MENU_SEQ_EXECUTION_MODE,
+  MENU_SEQ_DELETE_ALL_CONFIRM,
   MENU_SEQ_CONFIRM_SAVE,
   MENU_SEQ_RUNNING,
   MENU_SEQ_RUNNING_OPTIONS,
@@ -258,73 +348,7 @@ enum MenuState {
 };
 
 MenuState currentMenu = MENU_MAIN;
-int menuCursor = 0;
-
-// === Variables de sensores ===
-float temperature = 0.0;
-float phValue = 0.0;
-float turbidityMCmL = 0.0;
-unsigned long lastSensorRead = 0;
-const unsigned long sensorReadInterval = 1000;
-
-// === Variables para calibración pH ===
-float calibrationValue = 0.0;
-int calibrationStep = 0;
-
-float phLimitSet = 7.0;      // pH límite establecido
-float phLimitMin = 4.0;
-bool phControlActive = false; // Control automático activo
-bool co2InjectionActive = false; // Inyección manual activa
-int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
-int co2MinutesRemaining = 0; // Minutos restantes
-unsigned long co2StartTime = 0;
-int co2TimesPerDay = 0;
-int co2TimesSet = 0;
-int co2InjectionsCompleted = 0;
-bool co2BucleMode = false;
-unsigned long co2NextInjectionTime = 0;
-unsigned long co2IntervalMs = 0;
-bool co2ScheduleActive = false;
-unsigned long co2DailyStartTime = 0;
-
-// === Variables para las secuencias ===
-struct SequenceStep {
-  int colorIntensity[4];
-  int hours;    
-  int minutes;  
-  int seconds;  
-};
-
-struct Sequence {
-  bool configured;
-  int stepCount;
-  SequenceStep steps[10];
-};
-
-Sequence sequences[10];
-int selectedSequence = 0;
-int currentConfigStep = 0;
-int currentColorConfig = 0;
-bool sequenceRunning = false;
-int currentSequenceStep = 0;
-
-// === Variables de tiempo para la secuencia ===
-DateTime sequenceStartTime;
-DateTime stepStartTime;
-uint32_t SavedStepStartTime = 0;
-volatile bool rtcInterrupt = false;
-
-// Variables para encoder con interrupciones
-volatile int encoderPos = 0;
-volatile uint8_t encoderLastState = 0;
-volatile bool encoderChanged = false;
-
-// === Configuración PWM ===
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
-
-// === Servidor Web ===
-AsyncWebServer server(80);
+int       menuCursor  = 0;
 
 // === Función de interrupción del RTC ===
 void IRAM_ATTR onRTCInterrupt() {
