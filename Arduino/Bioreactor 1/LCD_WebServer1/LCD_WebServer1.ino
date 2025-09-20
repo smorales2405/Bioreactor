@@ -1,3 +1,6 @@
+/**********************************
+ *  INCLUDES
+ **********************************/
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -12,180 +15,291 @@
 #include <EEPROM.h>
 #include <PCF8574.h>
 
-// === Configuración WiFi ===
-const char* ap_ssid = "ESP32-Bioreactor1";
+/**********************************
+ *  1) WEBSERVER (WiFi)
+ **********************************/
+const char* ap_ssid     = "Bioreactor1";
 const char* ap_password = "bioreactor1";
+AsyncWebServer server(80);
 
-// === LCD 20x4 ===
+/**********************************
+ *  2) MÓDULOS (RTC, ADS, LCD, Encoder, PCF8574)
+ **********************************/
+// LCD 20x4 (I2C)
 LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// === RTC DS3231 ===
+// RTC DS3231
 RTC_DS3231 rtc;
+#define SQW_PIN 17  // Pin SQW del RTC
 
-// === Sensores ===
-Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
+// ADC (pH / turbidez / señales analógicas)
 Adafruit_ADS1115 ads;
 
+// Termómetro PT100 con MAX31865 (SPI por software)
+Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
 #define RREF      430.0
 #define RNOMINAL  100.0
 
-// === Pines del encoder ===
+// PCF8574 (I2C)
+PCF8574 pcfInput(0x20);
+PCF8574 pcfOutput(0x21);
+
+// Encoder rotatorio
 #define ENCODER_CLK 34
 #define ENCODER_DT  35
 #define ENCODER_SW  32
 
-// === Pin del Boton Emergencia ===
-#define EMERGENCY_PIN 39
+// Estado de encoder (polling e interrupción)
+int lastClk = HIGH;
+unsigned long lastButtonPress = 0;
+unsigned long lastExtraButtonPress = 0;
+const unsigned long debounceDelay = 500;
 
-#define BUZZER_PIN 33  // Pin PWM para el buzzer
-
-// === Pin SQW del RTC ===
-#define SQW_PIN 17
-
-// Flujometro
-#define FLOW_SENSOR_PIN 36
-#define EEPROM_VOLUME_ADDR 4  // Dirección para guardar volumen
-#define K_FACTOR 7.5
-#define PULSOS_POR_LITRO (K_FACTOR * 60)
-
-// Variables para control de alarmas
-bool alarmActive = false;
-bool tempAlarm = false;
-bool phAlarm = false;
-bool emergencyAlarm = false;
-//unsigned long lastAlarmCheck = 0;
-//const unsigned long alarmCheckInterval = 500; // Verificar cada 500ms
-bool alarmSilenced = false;
-bool tempWasNormal = false;
-bool phWasNormal = false;
-bool alarmWasSilenced = false;
-
-// Variables de flujo
-volatile unsigned long pulseCount = 0;
-float volumeTotal = 0.0;
-float volumeLlenado = 0.0;
-float targetVolume = 0.0;
-bool fillingActive = false;
-unsigned long lastFlowCheck = 0;
-
-//Aireacion
-bool aireacionActive = false;
-bool co2Active = false;
-
-bool sequenceLoopMode = false;
-
-volatile bool emergencyActive = false;
-unsigned long lastEmergencyCheck = 0;
-
-// === Pines PWM LEDS ===
-const int ledPins[] = {4, 26, 16, 25};
-const char* ledNames[] = {"Blanco", "Rojo", "Verde", "Azul"};
-const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
-const int numLeds = 4;
-
-// === microSD SPI ===
+// Modulo SD
 SPIClass sdSPI(VSPI);
 #define SD_CS   27
 #define SD_MOSI 13
 #define SD_MISO 12
 #define SD_SCK  14
 
-// === Variables de estado ===
-int selectedLed = 0;
-int selectedAction = 0;
-int pwmValues[4] = {0, 0, 0, 0};
-bool ledStates[4] = {false, false, false, false};
+/**********************************
+ *  3) LEDS (PWM, Secuencias)
+ **********************************/
+// Pines, canales y metadatos
+const int  ledPins[]     = {4, 26, 16, 25};
+const int  ledChannels[] = {1, 2, 3, 4};
+const char* ledNames[]   = {"Blanco", "Rojo", "Verde", "Azul"};
+const char* ledNamesWeb[] = {"blanco", "rojo", "verde", "azul"};
+const int  numLeds = 4;
 
-// === Variables del encoder ===
-int lastClk = HIGH;
-unsigned long lastButtonPress = 0;
-unsigned long lastExtraButtonPress = 0;
-const unsigned long debounceDelay = 200;
+// Estado manual
+int  selectedLed = 0;
+int  selectedAction = 0;
+int  pwmValues[4]  = {0, 0, 0, 0};
+bool ledStates[4]  = {false, false, false, false};
 
-// Instancias PCF8574
-PCF8574 pcfInput(0x20);
-PCF8574 pcfOutput(0x21);
+// PWM
+const int pwmFreq = 5000;
+const int pwmResolution = 8;
 
-// Direcciones EEPROM para turbidez
-#define EEPROM_TURB_MUESTRA1_V 100  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA1_C 104  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA2_V 108  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA2_C 112  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA3_V 116  // Float (4 bytes)
-#define EEPROM_TURB_MUESTRA3_C 120  // Float (4 bytes)
-#define EEPROM_TURB_COEF_A 124      // Float (4 bytes)
-#define EEPROM_TURB_COEF_B 128      // Float (4 bytes)
-#define EEPROM_TURB_COEF_C 132      // Float (4 bytes)
+// Secuencias
+struct SequenceStep {
+  int colorIntensity[4];
+  int hours;
+  int minutes;
+  int seconds;
+};
 
-// Direcciones EEPROM para pH
-#define EEPROM_PH_MUESTRA1_V 140  // Float (4 bytes)
-#define EEPROM_PH_MUESTRA1_PH 144 // Float (4 bytes)
-#define EEPROM_PH_MUESTRA2_V 148  // Float (4 bytes)
-#define EEPROM_PH_MUESTRA2_PH 152 // Float (4 bytes)
-#define EEPROM_PH_COEF_M 156       // Float (4 bytes) - pendiente
-#define EEPROM_PH_COEF_B 160       // Float (4 bytes) - intercepto
+struct Sequence {
+  bool configured;
+  int  stepCount;
+  SequenceStep steps[10];
+};
 
-// Direcciones EEPROM para estado del sistema
-#define EEPROM_SYSTEM_STATE 300      // 1 byte - flags de estado
-#define EEPROM_LED_STATES 301        // 4 bytes - estados de LEDs
-#define EEPROM_LED_PWM 305           // 4 bytes - valores PWM
-#define EEPROM_SEQUENCE_RUNNING 309  // 1 byte - secuencia activa
-#define EEPROM_SEQUENCE_ID 310       // 1 byte - ID de secuencia
-#define EEPROM_SEQUENCE_STEP 311     // 1 byte - paso actual
-#define EEPROM_AIREACION 312         // 1 byte - estado aireación
-#define EEPROM_CO2 313               // 1 byte - estado CO2
+Sequence sequences[10];
+int   selectedSequence   = 0;
+int   currentConfigStep  = 0;
+int   currentColorConfig = 0;
+bool  sequenceRunning    = false;
+bool  sequenceLoopMode   = false;
+int   currentSequenceStep = 0;
 
-// Agregar direcciones EEPROM para límites de temperatura
-#define EEPROM_TEMP_MIN 170  // Float (4 bytes)
-#define EEPROM_TEMP_MAX 174  // Float (4 bytes)
+// Tiempos de secuencias
+DateTime  sequenceStartTime;
+DateTime  stepStartTime;
+uint32_t  SavedStepStartTime = 0;
+volatile bool rtcInterrupt   = false;
 
-// Variables para calibración de turbidez
+/**********************************
+ *  4) SENSORES (Temperatura, pH, Turbidez/Concentración, Flujo)
+ **********************************/
+// Lecturas/estado de sensores
+float temperature      = 0.0;
+float phValue          = 0.0;
+float turbidityMCmL    = 0.0;
+unsigned long lastSensorRead = 0;
+const unsigned long sensorReadInterval = 1000; // ms
+
+// Calibración pH (lecturas y modelo)
+float phMuestra1V = 0.0, phMuestra1pH = 0.0;
+float phMuestra2V = 0.0, phMuestra2pH = 0.0;
+float phCoefM = 0.0, phCoefB = 0.0;
+int   phCalibValue = 7;       // valor temporal (neutro)
+int   selectedPhMuestra = 0;  // 0= M1, 1= M2
+float calibrationValue = 0.0;
+int   calibrationStep  = 0;
+
+// Calibración Turbidez/Concentración
 float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
 float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
 float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
 float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
-int turbCalibValue = 0;  // Valor temporal para calibración
-int selectedMuestra = 0; // 0=Muestra1, 1=Muestra2, 2=Muestra3
-float tempVoltageReading = 0.0; // Voltaje temporal actual
-int tempConcentrationValue = 0; // Concentración temporal para editar
+int   turbCalibValue = 0;
+int   selectedMuestra = 0;
+float tempVoltageReading = 0.0;
+int   tempConcentrationValue = 0;
 
-// Variables para calibración de pH
-float phMuestra1V = 0.0, phMuestra1pH = 0.0;
-float phMuestra2V = 0.0, phMuestra2pH = 0.0;
-float phCoefM = 0.0, phCoefB = 0.0;
-int phCalibValue = 7;  // Valor temporal para calibración (iniciar en pH neutro)
-int selectedPhMuestra = 0; // 0=Muestra1, 1=Muestra2
+// Límites de temperatura (edición/visual)
+float tempLimitMin = 18.0;
+float tempLimitMax = 28.0;
+float tempEditValue = 0.0;
+bool  editingMin = true;
 
-// Variables para almacenamiento de datos
-bool dataLogging[4] = {false, false, false, false}; // Estado de logging para cada tipo
-unsigned long lastLogTime[4] = {0, 0, 0, 0}; // Último tiempo de logging para cada tipo
-unsigned long logInterval = 5000; // 5 segundos en milisegundos (configurable)
-int selectedDataType = 0; // Tipo seleccionado (0-3 para Tipo 1-4)
+// Flujómetro (volumen/llenado)
+#define FLOW_SENSOR_PIN 36
+#define PULSOS_POR_LITRO 450
+volatile unsigned long pulseCount = 0;
+float volumeTotal   = 0.0;
+float volumeLlenado = 0.0;
+float targetVolume  = 0.0;
+bool  fillingActive = false;
+unsigned long lastFlowCheck = 0;
 
-// Variables para límites de temperatura
-float tempLimitMin = 18.0;  // Valor por defecto
-float tempLimitMax = 28.0;  // Valor por defecto
-float tempEditValue = 0.0;  // Valor temporal para edición
-bool editingMin = true;      // Flag para saber qué límite se está editando
+/**********************************
+ *  5) AIREACIÓN
+ **********************************/
+bool aireacionActive = false;
 
-// Direcciones EEPROM para configuración de logging
+/**********************************
+ *  6) CONTROL CO2
+ **********************************/
+bool  co2Active = false;        // estado general CO2 (UI)
+float phLimitSet   = 7.0;       // punto de control
+float phLimitMin   = 4.0;       // límite inferior (alarma/registro)
+bool  phControlActive     = false; // automático activo
+bool  co2InjectionActive  = false; // inyección manual activa
+
+int   co2MinutesSet       = 0;
+int   co2MinutesRemaining = 0;
+unsigned long co2StartTime = 0;
+
+int   co2TimesPerDay      = 0;
+int   co2TimesSet         = 0;
+int   co2InjectionsCompleted = 0;
+bool  co2BucleMode        = false;
+
+unsigned long co2NextInjectionTime = 0;
+unsigned long co2IntervalMs        = 0;
+bool  co2ScheduleActive            = false;
+unsigned long co2DailyStartTime    = 0;
+
+/**********************************
+ *  7) ALARMAS (temperatura, pH, emergencia, buzzer)
+ **********************************/
+#define EMERGENCY_PIN 39
+#define BUZZER_PIN    33
+
+bool alarmActive        = false;
+bool tempAlarm          = false;
+bool phAlarm            = false;
+bool emergencyAlarm     = false;
+// unsigned long lastAlarmCheck = 0;
+// const unsigned long alarmCheckInterval = 500;
+bool alarmSilenced      = false;
+bool tempWasNormal      = false;
+bool phWasNormal        = false;
+bool alarmWasSilenced   = false;
+
+// Flags para evitar duplicados en log
+bool tempAlarmLogged      = false;
+bool phAlarmLogged        = false;
+bool emergencyAlarmLogged = false;
+
+volatile bool   emergencyActive = false;
+unsigned long   lastEmergencyCheck = 0;
+
+// Historial de alarmas
+#define MAX_ALARM_HISTORY 100
+#define ALARM_LOG_FILE "/Log/alarm_log.txt"
+struct AlarmRecord {
+  char  timestamp[20];
+  char  type[30];
+  float value;
+};
+
+/**********************************
+ *  8) DIRECCIONES EEPROM
+ **********************************/
+// Volumen (llenado)
+#define EEPROM_VOLUME_ADDR 4    // float (4 bytes)
+
+// Turbidez (calibración)
+#define EEPROM_TURB_MUESTRA1_V 100
+#define EEPROM_TURB_MUESTRA1_C 104
+#define EEPROM_TURB_MUESTRA2_V 108
+#define EEPROM_TURB_MUESTRA2_C 112
+#define EEPROM_TURB_MUESTRA3_V 116
+#define EEPROM_TURB_MUESTRA3_C 120
+#define EEPROM_TURB_COEF_A     124
+#define EEPROM_TURB_COEF_B     128
+#define EEPROM_TURB_COEF_C     132
+
+// pH (calibración y modelo)
+#define EEPROM_PH_MUESTRA1_V   140
+#define EEPROM_PH_MUESTRA1_PH  144
+#define EEPROM_PH_MUESTRA2_V   148
+#define EEPROM_PH_MUESTRA2_PH  152
+#define EEPROM_PH_COEF_M       156
+#define EEPROM_PH_COEF_B       160
+
+// Límites de temperatura
+#define EEPROM_TEMP_MIN 170   // float
+#define EEPROM_TEMP_MAX 174   // float
+
+// Límite inferior pH
+#define EEPROM_PH_LIMIT_MIN 178 // float
+
+// CO2 (programación/estado)
+#define EEPROM_CO2_MINUTES         180  // uint16_t (180–181)
+#define EEPROM_CO2_TIMES           182  // uint16_t (182–183)
+#define EEPROM_CO2_BUCLE           184  // uint8_t
+#define EEPROM_CO2_ACTIVE          185  // uint8_t
+#define EEPROM_CO2_INJECTIONS_DONE 186  // uint16_t (186–187)
+#define EEPROM_CO2_REMAINING_SEC   188  // uint32_t (188–191)
+#define EEPROM_INIT_FLAG           192  // uint8_t
+#define EEPROM_MAGIC_NUMBER        0xAA // constante
+
+// Estado del sistema (LEDs y secuencias)
+#define EEPROM_SEQUENCE_LOOP                  300   // 1 byte
+#define EEPROM_LED_STATES                     301   // 4 bytes
+#define EEPROM_LED_PWM                        305   // 4 bytes
+#define EEPROM_SEQUENCE_RUNNING               309   // 1 byte
+#define EEPROM_SEQUENCE_ID                    310   // 1 byte
+#define EEPROM_SEQUENCE_STEP                  311   // 1 byte
+#define EEPROM_AIREACION                      312   // 1 byte
+#define EEPROM_CO2                            313   // 1 byte
+#define EEPROM_SEQUENCE_STEP_START_TIME       314   // uint32_t
+
+// Logging (config general)
 #define EEPROM_LOG_INTERVAL 200  // unsigned long (4 bytes)
 
-// === Estados del menú ===
+/**********************************
+ *  9) ALMACENAMIENTO EN SD
+ **********************************/
+
+// Variables para almacenamiento/registro
+bool           dataLogging[4]   = {false, false, false, false};
+unsigned long  lastLogTime[4]   = {0, 0, 0, 0};
+unsigned long  logInterval      = 5000; // ms
+int            selectedDataType = 0;    // 0–3
+
+/**********************************
+ *  10) INTERFAZ (MENÚ / PANTALLA)
+ **********************************/
 enum MenuState {
-  MENU_MAIN,           
+  MENU_MAIN,
   MENU_SENSORS,
   MENU_TEMP_LIMITS,
   MENU_TEMP_SET_MIN,
   MENU_TEMP_SET_MAX,
-  MENU_TEMP_CONFIRM_SAVE,        
-  MENU_SENSOR_PH,      
+  MENU_TEMP_CONFIRM_SAVE,
+  MENU_SENSOR_PH,
   MENU_PH_CALIBRATION_MENU,
   MENU_PH_SET_MUESTRA,
   MENU_PH_CONFIRM_MUESTRA,
   MENU_PH_CALIBRATING,
-  MENU_PH_PANEL,              // Panel principal de pH
-  MENU_PH_SET_LIMIT,          // Configurar pH límite
+  MENU_PH_PANEL,
+  MENU_PH_SET_LIMIT,
   MENU_SENSOR_TURBIDEZ,
   MENU_TURB_CALIBRATION,
   MENU_TURB_SET_MUESTRA,
@@ -196,10 +310,10 @@ enum MenuState {
   MENU_TURB_CONFIRM_VOLTAGE,
   MENU_TURB_SET_CONCENTRATION,
   MENU_TURB_CONFIRM_CONCENTRATION,
-  MENU_PH_MANUAL_CO2,         // Inyección manual de CO2
-  MENU_PH_MANUAL_CO2_CONFIRM, // Confirmar inyección
-  MENU_PH_MANUAL_CO2_ACTIVE,  // CO2 activo
-  MENU_ACTION,         
+  MENU_PH_MANUAL_CO2,
+  MENU_PH_MANUAL_CO2_CONFIRM,
+  MENU_PH_MANUAL_CO2_ACTIVE,
+  MENU_ACTION,
   MENU_LED_SELECT,
   MENU_ONOFF,
   MENU_INTENSITY,
@@ -208,9 +322,9 @@ enum MenuState {
   MENU_SEQ_CONFIG_CANTIDAD,
   MENU_SEQ_CONFIG_COLOR,
   MENU_SEQ_CONFIG_TIME,
-  MENU_SEQ_CONFIG_TIME_CONFIRM, 
-  MENU_SEQ_EXECUTION_MODE,       
-  MENU_SEQ_DELETE_ALL_CONFIRM,  
+  MENU_SEQ_CONFIG_TIME_CONFIRM,
+  MENU_SEQ_EXECUTION_MODE,
+  MENU_SEQ_DELETE_ALL_CONFIRM,
   MENU_SEQ_CONFIRM_SAVE,
   MENU_SEQ_RUNNING,
   MENU_SEQ_RUNNING_OPTIONS,
@@ -234,63 +348,7 @@ enum MenuState {
 };
 
 MenuState currentMenu = MENU_MAIN;
-int menuCursor = 0;
-
-// === Variables de sensores ===
-float temperature = 0.0;
-float phValue = 0.0;
-float turbidityMCmL = 0.0;
-unsigned long lastSensorRead = 0;
-const unsigned long sensorReadInterval = 1000;
-
-// === Variables para calibración pH ===
-float calibrationValue = 0.0;
-int calibrationStep = 0;
-
-float phLimitSet = 7.0;      // pH límite establecido
-bool phControlActive = false; // Control automático activo
-bool co2InjectionActive = false; // Inyección manual activa
-int co2MinutesSet = 0;       // Minutos de CO2 a inyectar
-int co2MinutesRemaining = 0; // Minutos restantes
-unsigned long co2StartTime = 0;
-
-// === Variables para las secuencias ===
-struct SequenceStep {
-  int colorIntensity[4];
-  int hours;    
-  int minutes;  
-  int seconds;  
-};
-
-struct Sequence {
-  bool configured;
-  int stepCount;
-  SequenceStep steps[10];
-};
-
-Sequence sequences[10];
-int selectedSequence = 0;
-int currentConfigStep = 0;
-int currentColorConfig = 0;
-bool sequenceRunning = false;
-int currentSequenceStep = 0;
-
-// === Variables de tiempo para la secuencia ===
-DateTime sequenceStartTime;
-DateTime stepStartTime;
-volatile bool rtcInterrupt = false;
-
-// Variables para encoder con interrupciones
-volatile int encoderPos = 0;
-volatile uint8_t encoderLastState = 0;
-volatile bool encoderChanged = false;
-
-// === Configuración PWM ===
-const int pwmFreq = 5000;
-const int pwmResolution = 8;
-
-// === Servidor Web ===
-AsyncWebServer server(80);
+int       menuCursor  = 0;
 
 // === Función de interrupción del RTC ===
 void IRAM_ATTR onRTCInterrupt() {
@@ -313,9 +371,10 @@ void setup() {
   // Inicializar EEPROM
   EEPROM.begin(512);
   loadTemperatureLimits();
+  loadpHLimit();
   loadTurbidityCalibration();
   loadPhCalibration(); 
-
+  
   EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
   if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
   volumeTotal = 0.0;
@@ -363,15 +422,15 @@ void setup() {
   pcfOutput.digitalWrite(P3, HIGH);
   pcfOutput.digitalWrite(P4, HIGH);
   pcfOutput.begin();
-
+  
   // Configurar PWM para cada LED
   for (int i = 0; i < numLeds; i++) {
-    ledcAttach(ledPins[i], pwmFreq, pwmResolution);
+    ledcAttachChannel(ledPins[i], pwmFreq, pwmResolution, ledChannels[i]);
     ledcWrite(ledPins[i], 0);
   }
   
   //Buzzer
-  ledcAttach(BUZZER_PIN, 2000, pwmResolution); // 2kHz frecuencia, 8 bits resolución
+  ledcAttachChannel(BUZZER_PIN, 2000, pwmResolution, 5); // 2kHz frecuencia, 8 bits resolución
   ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
 
   // Inicializar RTC
@@ -416,6 +475,7 @@ void setup() {
   // Inicializar SD
   lcd.setCursor(0, 3);
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+  //delay(3000);
   if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println("Error al inicializar SD");
     lcd.print("SD Card Error!");
@@ -447,12 +507,13 @@ void setup() {
   // Verificar y reanudar logging si estaba activo
   for (int i = 0; i < 4; i++) {
     // Leer flag de logging desde archivo de configuración
-    String configFile = "config_tipo" + String(i + 1) + ".txt";
+    String configFile = "/config/config_tipo" + String(i + 1) + ".txt";
     if (SD.exists(configFile)) {
       File file = SD.open(configFile, FILE_READ);
       if (file) {
         String state = file.readStringUntil('\n');
-        if (state == "LOGGING") {
+        state.trim();
+        if (state.equals("LOGGING")) {
           dataLogging[i] = true;
           lastLogTime[i] = millis();
           Serial.print("Reanudando logging Tipo ");
@@ -538,44 +599,54 @@ void saveSystemState() {
   }
   
   // Guardar estado de secuencia
+  EEPROM.write(EEPROM_SEQUENCE_LOOP, sequenceLoopMode ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
   EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
-  
+  SavedStepStartTime = stepStartTime.unixtime();
+  EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
+
   // Guardar estados de aireación y CO2
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
   EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
   
+  // Guardar estado de inyeccion manual de CO2
+  saveCO2ToEEPROM();
+
   EEPROM.commit();
 }
 
 void loadSystemState() {
-  // Cargar estados de LEDs
-  for (int i = 0; i < 4; i++) {
-    ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
-    pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
-    
-    // Aplicar valores a los LEDs
-    if (ledStates[i]) {
-      int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
-      ledcWrite(ledPins[i], pwmValue);
-    }
-  }
   
   // Cargar estado de secuencia
   bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
   if (wasSequenceRunning) {
     selectedSequence = EEPROM.read(EEPROM_SEQUENCE_ID);
     currentSequenceStep = EEPROM.read(EEPROM_SEQUENCE_STEP);
+    sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
+    EEPROM.get(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
+    stepStartTime = DateTime(SavedStepStartTime);
     
     // Verificar si la secuencia es válida antes de reanudar
     if (selectedSequence < 10 && sequences[selectedSequence].configured) {
       sequenceRunning = true;
-      stepStartTime = rtc.now();
+      //stepStartTime = rtc.now();
       applySequenceStep(currentSequenceStep);
       
       Serial.println("Reanudando secuencia tras reinicio");
     }
+  } else {
+      // Cargar estados de LEDs
+      for (int i = 0; i < 4; i++) {
+        ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
+        pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
+        
+        // Aplicar valores a los LEDs
+        if (ledStates[i]) {
+          int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
+          ledcWrite(ledPins[i], pwmValue);
+        }
+      }
   }
   
   // Cargar y aplicar estados de aireación y CO2
@@ -590,6 +661,9 @@ void loadSystemState() {
     pcfOutput.digitalWrite(P3, LOW);
     Serial.println("CO2 reactivado tras reinicio");
   }
+
+  loadCO2FromEEPROM();
+
 }
 
 void setupWiFi() {
@@ -637,19 +711,19 @@ void setupWiFi() {
 void setupWebServer() {
   // Servir archivos estáticos desde la SD
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/index.html", "text/html");
+    request->send(SD, "/Webserver/index.html", "text/html");
   });
   
   server.on("/styles.css", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/styles.css", "text/css");
+    request->send(SD, "/Webserver/styles.css", "text/css");
   });
 
   server.on("/chart.umd.min.js", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/chart.umd.min.js", "text/js");
+    request->send(SD, "/Webserver/chart.umd.min.js", "text/js");
   });   
 
   server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SD, "/app.js", "text/js");
+    request->send(SD, "/Webserver/app.js", "text/js");
   });  
   
   // API para sensores
@@ -687,7 +761,31 @@ void setupWebServer() {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
-    });
+  });
+
+  server.on("/api/ph/load/limit", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"min\":" + String(phLimitMin, 1);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // Establecer límite mínimo de pH
+  server.on("/api/ph/save/limit", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          phLimitMin = doc["min"];
+          savePhLimit();
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
+  });
 
   // Estado de alarmas mejorado
   server.on("/api/alarm/status", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -698,6 +796,46 @@ void setupWebServer() {
     json += "\"phLow\":" + String(phAlarm ? "true" : "false");
     json += "}";
     request->send(200, "application/json", json);
+  });
+
+  // Obtener historial de alarmas
+  server.on("/api/alarms/history", HTTP_GET, [](AsyncWebServerRequest *request){
+    File alarmFile = SD.open(ALARM_LOG_FILE, FILE_READ);
+    String json = "[";
+    
+    if (alarmFile) {
+      boolean first = true;
+      while (alarmFile.available()) {
+        String line = alarmFile.readStringUntil('\n');
+        if (line.length() > 0) {
+          int firstComma = line.indexOf(',');
+          int secondComma = line.indexOf(',', firstComma + 1);
+          
+          if (firstComma > 0 && secondComma > 0) {
+            if (!first) json += ",";
+            json += "{";
+            json += "\"timestamp\":\"" + line.substring(0, firstComma) + "\",";
+            json += "\"type\":\"" + line.substring(firstComma + 1, secondComma) + "\",";
+            json += "\"value\":" + line.substring(secondComma + 1);
+            json += "}";
+            first = false;
+          }
+        }
+      }
+      alarmFile.close();
+    }
+    json += "]";
+    request->send(200, "application/json", json);
+  });
+
+  // Borrar historial de alarmas
+  server.on("/api/alarms/clear", HTTP_POST, [](AsyncWebServerRequest *request){
+    SD.remove(ALARM_LOG_FILE);
+    File alarmFile = SD.open(ALARM_LOG_FILE, FILE_WRITE);
+    if (alarmFile) {
+      alarmFile.close();
+    }
+    request->send(200, "text/plain", "OK");
   });
 
   // Silenciar alarma temporalmente
@@ -746,151 +884,181 @@ void setupWebServer() {
     request->send(200, "text/plain", "OK");
   });
 
-  // Iniciar inyección manual de CO2
   server.on("/api/co2/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
       if (index + len == total) {
-        DynamicJsonDocument doc(256);
+        DynamicJsonDocument doc(512);
         DeserializationError error = deserializeJson(doc, data, len);
         
         if (!error) {
           co2MinutesSet = doc["minutes"];
           co2MinutesRemaining = co2MinutesSet;
-          co2InjectionActive = true;
-          co2StartTime = millis();
-          pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+          co2TimesSet = doc["times"] | 0;
+          co2TimesPerDay = co2TimesSet;
+          co2BucleMode = doc["bucle"] | false;
+          co2InjectionsCompleted = 0;
+          co2DailyStartTime = millis();
           
-          // Si hay modo bucle, guardarlo
-          bool loopMode = doc["loop"] | false;
-          if (loopMode) {
-            // Aquí podrías implementar la lógica del bucle
-            // Por ahora solo guardamos el estado
+          if (co2TimesPerDay > 0) {
+            // Calcular intervalo entre inyecciones
+            co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
+            co2ScheduleActive = true;
+            co2NextInjectionTime = millis() + co2IntervalMs;
+            
+            // Iniciar primera inyección
+            startCO2InjectionCycle();
+          } else {
+            // Inyección única
+            co2InjectionActive = true;
+            co2StartTime = millis();
+            pcfOutput.digitalWrite(P3, LOW);
           }
+          
+          // Guardar en EEPROM
+          saveCO2ToEEPROM();
           
           request->send(200, "text/plain", "OK");
         } else {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
-    });
+    saveSystemState();
+  });
 
   // Pausar inyección de CO2
-  server.on("/api/co2/manual/pause", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (co2InjectionActive) {
-      co2InjectionActive = false;
-      pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
-      // Guardar tiempo restante para poder reanudar
-    }
+  server.on("/api/co2/manual/stop", HTTP_POST, [](AsyncWebServerRequest *request){
+    stopCO2Injection();
+    co2ScheduleActive = false;
+    co2TimesPerDay = 0;
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
-  // Reiniciar inyección de CO2
   server.on("/api/co2/manual/reset", HTTP_POST, [](AsyncWebServerRequest *request){
     co2InjectionActive = false;
     co2MinutesRemaining = 0;
     co2MinutesSet = 0;
-    pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
+    co2TimesPerDay = 0;
+    co2TimesSet = 0;
+    co2InjectionsCompleted = 0;
+    co2BucleMode = false;
+    co2ScheduleActive = false;
+    pcfOutput.digitalWrite(P3, HIGH);
+    
+    // Limpiar EEPROM
+    clearCO2FromEEPROM();
+    
     request->send(200, "text/plain", "OK");
   });
 
-  // Reanudar inyección pausada
-  server.on("/api/co2/manual/resume", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (co2MinutesRemaining > 0) {
-      co2InjectionActive = true;
-      co2StartTime = millis();
-      pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+  server.on("/api/co2/manual/complete", HTTP_POST, [](AsyncWebServerRequest *request){
+  // Llamado cuando una inyección individual termina
+  co2InjectionActive = false;
+  pcfOutput.digitalWrite(P3, HIGH);
+  saveSystemState();
+  request->send(200, "text/plain", "OK");
+  });
+
+  // Control de LEDs individuales - ON/OFF
+  server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(0, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(0, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(1, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(1, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(2, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(2, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(3, true, 100);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+  server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
+    setLED(3, false, 0);
+    saveSystemState();
+    request->send(200, "text/plain", "OK");
+  });
+
+    // Control PWM individual para cada color
+  server.on("/led/blanco/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(0, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
     }
-    request->send(200, "text/plain", "OK");
   });
 
-// Control de LEDs individuales - ON/OFF
-server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(0, true, 100);
-  request->send(200, "text/plain", "OK");
-});
+  server.on("/led/rojo/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(1, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
 
-server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(0, false, 0);
-  request->send(200, "text/plain", "OK");
-});
+  server.on("/led/verde/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(2, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
 
-server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(1, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(1, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(2, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(2, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(3, true, 100);
-  request->send(200, "text/plain", "OK");
-});
-
-server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
-  setLED(3, false, 0);
-  request->send(200, "text/plain", "OK");
-});
-
-  // Control PWM individual para cada color
-server.on("/led/blanco/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(0, value > 0, value);
-    request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
-
-server.on("/led/rojo/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(1, value > 0, value);
-    request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
-
-server.on("/led/verde/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(2, value > 0, value);
-    request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
-
-server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
-  String path = request->url();
-  int value = path.substring(path.lastIndexOf('/') + 1).toInt();
-  if (value >= 0 && value <= 100) {
-    setLED(3, value > 0, value);
-    request->send(200, "text/plain", "OK");
-  } else {
-    request->send(400, "text/plain", "Invalid value");
-  }
-});
+  server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int value = path.substring(path.lastIndexOf('/') + 1).toInt();
+    if (value >= 0 && value <= 100) {
+      setLED(3, value > 0, value);
+      saveSystemState();
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Invalid value");
+    }
+  });
   
   // Estado de todos los LEDs
-  server.on("/status", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/leds/status", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
     for (int i = 0; i < numLeds; i++) {
       json += "\"" + String(ledNamesWeb[i]) + "\":{";
@@ -919,7 +1087,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
   });
   
   // Detalles de una secuencia
-  server.on("/api/sequence/*", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/api/sequence/config/*", HTTP_GET, [](AsyncWebServerRequest *request){
     String path = request->url();
     int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
@@ -950,34 +1118,33 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       request->send(400, "text/plain", "Invalid sequence ID");
     }
   });
-  
-  server.on("/api/sequence/*/start", HTTP_POST, [](AsyncWebServerRequest *request){
+
+  // Iniciar secuencia en bucle
+  server.on("/api/sequence/start/loop/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
-      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
+      sequenceLoopMode = true;
       startSequence();
+      Serial.println("Secuencia iniciada en loop desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
     }
   });
 
-  // Iniciar secuencia en bucle
-  server.on("/api/sequence/*/start/loop", HTTP_POST, [](AsyncWebServerRequest *request){
+  // Iniciar Secuencia una vez
+  server.on("/api/sequence/start/*", HTTP_POST, [](AsyncWebServerRequest *request){
     String path = request->url();
-    int startPos = path.indexOf("/sequence/") + 10;
-    int endPos = path.indexOf("/start");
-    int seqId = path.substring(startPos, endPos).toInt();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
     
     if (seqId >= 0 && seqId < 10 && sequences[seqId].configured) {
       selectedSequence = seqId;
-      sequenceLoopMode = true;
+      sequenceLoopMode = false; // AGREGAR: Configurar modo por defecto
       startSequence();
+      Serial.println("Secuencia iniciada 1 vez desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid sequence or not configured");
@@ -988,6 +1155,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
   server.on("/api/sequence/stop", HTTP_POST, [](AsyncWebServerRequest *request){
     if (sequenceRunning) {
       stopSequence();
+      Serial.println("Secuencia detenida desde Webserver");
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "No sequence running");
@@ -1002,7 +1170,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       json += ",\"sequenceId\":" + String(selectedSequence);
       json += ",\"currentStep\":" + String(currentSequenceStep);
       json += ",\"totalSteps\":" + String(sequences[selectedSequence].stepCount);
-      
+      json += ",\"loopMode\":" + String(sequenceLoopMode ? "true" : "false");
       
       // Calcular tiempo transcurrido
       DateTime now = rtc.now();
@@ -1074,16 +1242,59 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
       }
     });
 
+  server.on("/api/sequence/delete/*", HTTP_DELETE, [](AsyncWebServerRequest *request){
+    String path = request->url();
+    int seqId = path.substring(path.lastIndexOf('/') + 1).toInt();
+
+    if (seqId < 0 || seqId > 9) {
+      request->send(400, "text/plain", "Invalid sequence id");
+      return;
+    }
+
+    if (sequenceRunning && selectedSequence == seqId) {
+      stopSequence();  // idempotente
+    }
+
+    bool removed = false;
+    String seqfilename = "/Secuencias/seq_" + String(seqId+1) + ".json"; 
+
+    if (SD.exists(seqfilename)) {
+      removed = SD.remove(seqfilename);
+    } 
+
+    // 3) Limpiar la estructura en RAM
+    sequences[seqId].configured = false;
+    sequences[seqId].stepCount = 0;
+    for (int s = 0; s < 10; s++) {
+      for (int c = 0; c < 4; c++) sequences[seqId].steps[s].colorIntensity[c] = 0;
+      sequences[seqId].steps[s].hours   = 0;
+      sequences[seqId].steps[s].minutes = 0;
+      sequences[seqId].steps[s].seconds = 0;
+    }
+
+    // 4) Responder
+    if (removed) {
+      Serial.printf("Secuencia %d borrada (archivo eliminado)\n", seqId + 1);
+      request->send(200, "text/plain", "Deleted");
+    } else {
+      // Si no existía el archivo, igual marcamos como no configurada en RAM
+      Serial.printf("Secuencia %d marcada como no configurada (archivo no encontrado)\n", seqId + 1);
+      request->send(200, "text/plain", "No file, state cleared");
+    }
+  });
+
     // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
     pcfOutput.digitalWrite(P2, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = false;
     pcfOutput.digitalWrite(P2, HIGH);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1091,12 +1302,14 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
   server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = true;
     pcfOutput.digitalWrite(P3, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = false;
     pcfOutput.digitalWrite(P3, HIGH);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1126,6 +1339,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     volumeTotal = 0.0;
     pulseCount = 0;
     saveVolumeToEEPROM();
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1155,6 +1369,7 @@ server.on("/led/azul/pwm/*", HTTP_GET, [](AsyncWebServerRequest *request){
     volumeLlenado = 0.0;
     targetVolume = 9999;
     pcfOutput.digitalWrite(P1, LOW);
+    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1217,7 +1432,7 @@ void handleButtons() {
   }
   
   // Pulsador adicional
-  if (pcfInput.digitalRead(P1,true) == 0) {
+  if (pcfInput.digitalRead(P1) == 0) {
     if (millis() - lastExtraButtonPress > debounceDelay) {
       lastExtraButtonPress = millis();
     }
@@ -1225,12 +1440,241 @@ void handleButtons() {
   }
 }
 
-void handleExtraButton () {
-  switch (currentMenu) {   
+void handleExtraButton() {
+  switch (currentMenu) {
+    // Menús principales - volver al menú anterior
+    case MENU_SENSORS:
+      currentMenu = MENU_MAIN;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_ACTION:
+      currentMenu = MENU_MAIN;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO:
+      currentMenu = MENU_MAIN;
+      menuCursor = 2;
+      updateDisplay();
+      break;
+      
+    case MENU_AIREACION:
+      currentMenu = MENU_MAIN;
+      menuCursor = 3;
+      updateDisplay();
+      break;
+      
     case MENU_CO2:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
       updateDisplay();
+      break;
+      
+    case MENU_POTENCIA:
+      currentMenu = MENU_MAIN;
+      menuCursor = 5;
+      updateDisplay();
+      break;
+
+    case MENU_ALMACENAR:
+      currentMenu = MENU_MAIN;
+      menuCursor = 6;
+      updateDisplay();
+      break;
+
+    case MENU_WEBSERVER:
+      currentMenu = MENU_MAIN;
+      menuCursor = 7;
+      updateDisplay();
+      break;
+
+    // Submenús de sensores
+    case MENU_TEMP_LIMITS:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_SENSOR_PH:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SENSOR_TURBIDEZ:
+      currentMenu = MENU_SENSORS;
+      menuCursor = 1;
+      updateDisplay();
+      break;    
+
+    //Submenus de pH
+    case MENU_PH_PANEL:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_SET_LIMIT:
+      phControlActive = false; 
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_PH_MANUAL_CO2_ACTIVE:
+      currentMenu = MENU_PH_PANEL;
+      menuCursor = 1;
+      updateDisplay();
+      break;   
+
+    case MENU_PH_CALIBRATION_MENU:
+      currentMenu = MENU_SENSOR_PH;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    //Submenus de Turbidez
+    case MENU_TURB_CALIBRATION:
+      currentMenu = MENU_SENSOR_TURBIDEZ;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_TURB_MUESTRA_DETAIL:
+      currentMenu = MENU_SENSOR_TURBIDEZ;
+      menuCursor = 1;
+      updateDisplay();
+      break;    
+
+    // Submenús de LEDs
+    case MENU_LED_SELECT:
+      currentMenu = MENU_ACTION;
+      menuCursor = selectedAction;
+      updateDisplay();
+      break;
+      
+    case MENU_ONOFF:
+    case MENU_INTENSITY:
+      currentMenu = MENU_LED_SELECT;
+      menuCursor = selectedLed;
+      updateDisplay();
+      break;
+      
+    // Menús de secuencias
+    case MENU_SEQ_LIST:
+      currentMenu = MENU_ACTION;
+      menuCursor = 2;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_OPTIONS:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = selectedSequence;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_EXECUTION_MODE:
+      currentMenu = MENU_SEQ_OPTIONS;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_CONFIG_CANTIDAD:
+    case MENU_SEQ_CONFIG_COLOR:
+    case MENU_SEQ_CONFIG_TIME:
+    case MENU_SEQ_CONFIG_TIME_CONFIRM:
+      currentMenu = MENU_SEQ_EXIT_CONFIG_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_CONFIRM_SAVE:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = selectedSequence;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_RUNNING:
+      currentMenu = MENU_SEQ_STOP_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+
+    case MENU_SEQ_STOP_CONFIRM:
+      currentMenu = MENU_SEQ_RUNNING;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_EXIT_CONFIG_CONFIRM:
+      if (currentConfigStep < sequences[selectedSequence].stepCount) {
+        if (currentColorConfig < 4) {
+          currentMenu = MENU_SEQ_CONFIG_COLOR;
+        } else {
+          currentMenu = MENU_SEQ_CONFIG_TIME;
+        }
+      } else {
+        currentMenu = MENU_SEQ_CONFIG_CANTIDAD;
+      }
+      updateDisplay();
+      break;
+
+    // Menús de llenado
+    case MENU_LLENADO_SET_VOLUME:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_CONFIRM:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_ACTIVE:
+      currentMenu = MENU_LLENADO_STOP_CONFIRM;
+      menuCursor = 1;
+      updateDisplay();
+      break;
+              
+    case MENU_LLENADO_STOP_CONFIRM:
+      currentMenu = MENU_LLENADO_ACTIVE;
+      updateDisplay();
+      break;
+      
+    case MENU_LLENADO_RESET_CONFIRM:
+      currentMenu = MENU_LLENADO;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+      
+    case MENU_SEQ_DELETE_ALL_CONFIRM:
+      currentMenu = MENU_SEQ_LIST;
+      menuCursor = 10;
+      updateDisplay();
+      break;
+  
+    case MENU_ALMACENAR_TYPE:
+      currentMenu = MENU_ALMACENAR;
+      updateDisplay();
+      break;
+
+    // Menú principal - no hacer nada
+    case MENU_MAIN:
+      // Ya estamos en el menú principal
+      break;
+      
+    default:
+      // Para cualquier otro caso no manejado
       break;
   }
 }
@@ -1383,6 +1827,7 @@ void incrementCursor() {
       break;
       
     case MENU_INTENSITY:
+      menuCursor = constrain(menuCursor, 0, 20);
       if (menuCursor < 20) {  // Cambiar de 10 a 20 (0-100 en pasos de 5)
         menuCursor++;
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
@@ -1598,7 +2043,8 @@ void decrementCursor() {
       break;
       
     case MENU_INTENSITY:
-      if (menuCursor >= 0) {
+      menuCursor = constrain(menuCursor, 0, 20);
+      if (menuCursor >= 1) {
         menuCursor--;
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -2058,7 +2504,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentMenu = MENU_INTENSITY;
-          menuCursor = pwmValues[selectedLed];
+          menuCursor = 0;
         }
       }
       break;
@@ -2160,7 +2606,7 @@ void handleSelection() {
         sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig] = menuCursor*5;        
         currentColorConfig++;
         if (currentColorConfig < 4) {
-          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig];
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig]/5;
           updateColorPreview();
         } else {
           for (int i = 0; i < numLeds; i++) {
@@ -2175,7 +2621,7 @@ void handleSelection() {
           menuCursor = 0;
         } else {
           currentColorConfig = 0;
-          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[0];
+          menuCursor = sequences[selectedSequence].steps[currentConfigStep].colorIntensity[currentColorConfig]/5;
           updateColorPreview();
         }
       }
@@ -2292,6 +2738,7 @@ void handleSelection() {
       currentMenu = MENU_MAIN;
       menuCursor = 2;
     }
+    saveSystemState();
     break;
 
     case MENU_LLENADO_SET_VOLUME:
@@ -2309,6 +2756,7 @@ void handleSelection() {
         currentMenu = MENU_LLENADO;
         menuCursor = 1;
       }
+      saveSystemState();
       break;
 
     case MENU_LLENADO_ACTIVE:
@@ -2326,6 +2774,7 @@ void handleSelection() {
         // NO - Continuar
         currentMenu = MENU_LLENADO_ACTIVE;
       }
+      saveSystemState();
       break;
     
     case MENU_LLENADO_RESET_CONFIRM:
@@ -2342,6 +2791,7 @@ void handleSelection() {
       // En ambos casos volver al menú llenado
       currentMenu = MENU_LLENADO;
       menuCursor = 0;
+      saveSystemState();
       break;
 
     case MENU_AIREACION:
@@ -2407,7 +2857,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
     for (int i = 0; i < 10; i++) {
       sequences[i].configured = false;
       sequences[i].stepCount = 0;
-      String filename = "/seq_" + String(i + 1) + ".json";
+      String filename = "/Secuencias/seq_" + String(i + 1) + ".json";
       SD.remove(filename);
     }
     lcd.clear();
@@ -2502,6 +2952,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 0;
     }
+    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_STOP:
@@ -2515,6 +2966,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 1;
     }
+    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_DELETE:
@@ -2735,7 +3187,7 @@ void displayMainMenu() {
   
   for (int i = 0; i < 3; i++) {
     int optionIndex = startIndex + i;
-    if (optionIndex < 8) {
+    if (optionIndex < 9) {
       lcd.setCursor(0, i + 1);
       lcd.print(menuCursor == optionIndex ? "> " : "  ");
       lcd.print(opciones[optionIndex]);
@@ -3088,6 +3540,7 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 1);
   lcd.print("Nivel: ");
+  menuCursor = constrain(menuCursor, 0, 20);
   int percentage = menuCursor * 5;  // Pasos de 5%
   lcd.print(percentage);
   lcd.print("%");
@@ -3097,7 +3550,7 @@ void displayIntensityMenu() {
   
   lcd.setCursor(0, 2);
   lcd.print("[");
-  int barLength = map(menuCursor, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
+  int barLength = map(percentage, 0, 100, 0, 18);  // 20 pasos de 5% = 100%
   for (int i = 0; i < 18; i++) {
     if (i < barLength) {
       lcd.print("=");
@@ -3238,6 +3691,7 @@ void displaySeqConfigColor() {
     lcd.print(menuCursor * 5);  // Mostrar directamente el porcentaje
     lcd.print("%");
     
+    lcd.setCursor(0, 2);
     lcd.print("[");
     int barLength = map(menuCursor, 0, 20, 0, 18);
     for (int i = 0; i < 18; i++) {
@@ -3549,17 +4003,18 @@ void applySequenceStep(int step) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
     int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
+    delay(100);
     ledStates[i] = intensity > 0;
     pwmValues[i] = intensity/5;
     
-    if (intensity > 0) {
-      Serial.print(ledNames[i]);
-      Serial.print(":");
-      Serial.print(intensity * 10);
-      Serial.print("% ");
-    }
+    Serial.print(ledNames[i]);
+    Serial.print(":");
+    Serial.print(ledcRead(ledPins[i]));
+    Serial.print(" ");
+
   }
   Serial.println();
+  saveSystemState();
 }
 
 void checkSequenceProgress() {
@@ -3614,6 +4069,12 @@ void saveTemperatureLimits() {
   Serial.println(tempLimitMax);
 }
 
+void savePhLimit() {
+  EEPROM.put(EEPROM_PH_LIMIT_MIN, phLimitMin);
+  EEPROM.commit();
+  Serial.println("Límite mínimo de pH guardado: " + String(phLimitMin));
+}
+
 void loadTemperatureLimits() {
   EEPROM.get(EEPROM_TEMP_MIN, tempLimitMin);
   EEPROM.get(EEPROM_TEMP_MAX, tempLimitMax);
@@ -3638,8 +4099,15 @@ void loadTemperatureLimits() {
   Serial.println(tempLimitMax);
 }
 
+void loadpHLimit() {
+  EEPROM.get(EEPROM_PH_LIMIT_MIN, phLimitMin);
+  if (isnan(phLimitMin) || phLimitMin < 0 || phLimitMin > 14) {
+    phLimitMin = 6.0;  // Valor por defecto
+  }
+  }
+
 void saveSequence(int seqIndex) {
-  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  String filename = "/Secuencias/seq_" + String(seqIndex + 1) + ".json";
   
   SD.remove(filename);
   
@@ -3677,7 +4145,7 @@ void saveSequence(int seqIndex) {
 }
 
 void loadSequence(int seqIndex) {
-  String filename = "/seq_" + String(seqIndex + 1) + ".json";
+  String filename = "/Secuencias/seq_" + String(seqIndex + 1) + ".json";
   
   File file = SD.open(filename, FILE_READ);
   if (!file) {
@@ -3761,11 +4229,13 @@ void startFilling() {
   volumeTotal = pulsos / PULSOS_POR_LITRO;
   
   pcfOutput.digitalWrite(P1, LOW); // Activar bomba
+  saveSystemState();
 }
 
 void stopFilling() {
   fillingActive = false;
   pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
+  saveSystemState();
 }
 
 void saveVolumeToEEPROM() {
@@ -4202,13 +4672,118 @@ void stopCO2Injection() {
   }
 }
 
+void startCO2InjectionCycle() {
+  if (co2InjectionsCompleted < co2TimesPerDay) {
+    co2InjectionActive = true;
+    co2MinutesRemaining = co2MinutesSet;
+    co2StartTime = millis();
+    co2InjectionsCompleted++;
+    pcfOutput.digitalWrite(P3, LOW);
+    
+    Serial.print("Iniciando inyección ");
+    Serial.print(co2InjectionsCompleted);
+    Serial.print(" de ");
+    Serial.println(co2TimesPerDay);
+  }
+}
+
+void checkCO2Schedule() {
+  // Verificar si es tiempo de la siguiente inyección
+  if (co2ScheduleActive && !co2InjectionActive && millis() >= co2NextInjectionTime) {
+    if (co2InjectionsCompleted < co2TimesPerDay) {
+      startCO2InjectionCycle();
+      co2NextInjectionTime = millis() + co2IntervalMs;
+    } else if (co2BucleMode) {
+      // Reiniciar ciclo en modo bucle
+      co2InjectionsCompleted = 0;
+      co2DailyStartTime = millis();
+      startCO2InjectionCycle();
+      co2NextInjectionTime = millis() + co2IntervalMs;
+    } else {
+      // Ciclo diario completado sin bucle
+      co2ScheduleActive = false;
+    }
+  }
+  
+  // Verificar si han pasado 24 horas sin bucle
+  if (co2ScheduleActive && !co2BucleMode && 
+      (millis() - co2DailyStartTime) > (24UL * 3600 * 1000)) {
+    stopCO2Injection();
+    co2ScheduleActive = false;
+  }
+}
+
+void saveCO2ToEEPROM() {
+  EEPROM.write(EEPROM_CO2_MINUTES, co2MinutesSet);
+  EEPROM.write(EEPROM_CO2_TIMES, co2TimesSet);
+  EEPROM.write(EEPROM_CO2_BUCLE, co2BucleMode ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_ACTIVE, co2InjectionActive ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_INJECTIONS_DONE, co2InjectionsCompleted);
+  
+  // Guardar tiempo restante (2 bytes)
+  int remainingSeconds = co2MinutesRemaining * 60;
+  EEPROM.write(EEPROM_CO2_REMAINING_SEC, remainingSeconds & 0xFF);
+  EEPROM.write(EEPROM_CO2_REMAINING_SEC + 1, (remainingSeconds >> 8) & 0xFF);
+  
+  EEPROM.write(EEPROM_INIT_FLAG, EEPROM_MAGIC_NUMBER);
+  EEPROM.commit();
+}
+
+void clearCO2FromEEPROM() {
+  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 1; i++) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+}
+
+void loadCO2FromEEPROM() {
+  if (EEPROM.read(EEPROM_INIT_FLAG) == EEPROM_MAGIC_NUMBER) {
+    co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
+    co2TimesSet = EEPROM.read(EEPROM_CO2_TIMES);
+    co2TimesPerDay = co2TimesSet;
+    co2BucleMode = EEPROM.read(EEPROM_CO2_BUCLE) == 1;
+    co2InjectionsCompleted = EEPROM.read(EEPROM_CO2_INJECTIONS_DONE);
+    
+    bool wasActive = EEPROM.read(EEPROM_CO2_ACTIVE) == 1;
+    
+    if (wasActive) {
+      // Recuperar tiempo restante
+      int remainingSeconds = EEPROM.read(EEPROM_CO2_REMAINING_SEC) | 
+                           (EEPROM.read(EEPROM_CO2_REMAINING_SEC + 1) << 8);
+      co2MinutesRemaining = remainingSeconds / 60;
+      
+      if (co2MinutesRemaining > 0) {
+        // Reanudar inyección
+        co2InjectionActive = true;
+        co2StartTime = millis();
+        pcfOutput.digitalWrite(P3, LOW);
+        
+        if (co2TimesPerDay > 0) {
+          co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
+          co2ScheduleActive = true;
+          co2NextInjectionTime = millis() + co2IntervalMs;
+        }
+      }
+    }
+    
+    Serial.println("CO2 configuración recuperada de EEPROM");
+  }
+}
+
 void updateCO2Time() {
   if (co2InjectionActive) {
     unsigned long elapsed = (millis() - co2StartTime) / 60000; // minutos
     co2MinutesRemaining = co2MinutesSet - elapsed;
     
     if (co2MinutesRemaining <= 0) {
-      stopCO2Injection();
+      co2InjectionActive = false;
+      pcfOutput.digitalWrite(P3, HIGH);
+      
+      // Si hay programación activa, se manejará en checkCO2Schedule()
+      if (!co2ScheduleActive) {
+        stopCO2Injection();
+      }
+      
       if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE) {
         currentMenu = MENU_PH_PANEL;
         menuCursor = 1;
@@ -4216,6 +4791,9 @@ void updateCO2Time() {
       }
     }
   }
+  
+  // Verificar programación
+  checkCO2Schedule();
 }
 
 void checkPhControl() {
@@ -4429,9 +5007,9 @@ void displayTurbCalibrating() {
 
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
-  // Por ahora retorna un valor de prueba
-  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
-  float voltage = ads.computeVolts(adc);
+  //int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
+  //float voltage = ads.computeVolts(adc);
+  float voltage = 0.0;
   return voltage;
 }
 
@@ -4506,12 +5084,13 @@ float getTurbidityConcentration() {
   
   if (concentration < 0) concentration = 0;
   if (concentration > 100) concentration = 100;
-  
+
   if (!isfinite(concentration)) {            
     return 0.0;
   } else {
     return concentration;
   }
+
 }
 
 void displayPhCalibrationMenu() {
@@ -4639,8 +5218,9 @@ void displayPhCalibrating() {
 
 float getPhVoltage() {
   // Leer del sensor de pH conectado al ADC
-  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
-  float voltage = ads.computeVolts(adc);
+  //int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
+  //float voltage = ads.computeVolts(adc);
+  float voltage = 0.0;
   return voltage;
 }
 
@@ -4700,7 +5280,7 @@ float getPhValueCalibrated() {
   }
   
   float voltage = getPhVoltage();
-  
+
   float ph = phCoefM * voltage + phCoefB;
   
   // Limitar el rango de pH entre 0 y 14
@@ -4712,6 +5292,7 @@ float getPhValueCalibrated() {
   } else {
     return ph;
   }
+
 }
 
 void displayAlmacenarMenu() {
@@ -4824,7 +5405,7 @@ void startDataLogging(int type) {
   lastLogTime[type] = millis();
   
   // Crear archivo de configuración para mantener estado
-  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  String configFile = "/config/config_tipo" + String(type + 1) + ".txt";
   File file = SD.open(configFile, FILE_WRITE);
   if (file) {
     file.println("LOGGING");
@@ -4843,7 +5424,7 @@ void stopDataLogging(int type) {
   dataLogging[type] = false;
   
   // Eliminar archivo de configuración
-  String configFile = "/config_tipo" + String(type + 1) + ".txt";
+  String configFile = "/config/config_tipo" + String(type + 1) + ".txt";
   SD.remove(configFile);
   
   lcd.clear();
@@ -4855,7 +5436,7 @@ void stopDataLogging(int type) {
 }
 
 void deleteDataLog(int type) {
-  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  String filename = "/Datos/datos_tipo" + String(type + 1) + ".txt";
   
   if (SD.exists(filename)) {
     SD.remove(filename);
@@ -4873,7 +5454,7 @@ void deleteDataLog(int type) {
 }
 
 void saveDataToSD(int type) {
-  String filename = "/datos_tipo" + String(type + 1) + ".txt";
+  String filename = "/Datos/datos_tipo" + String(type + 1) + ".txt";
   
   // Verificar si el archivo existe, si no, crear con encabezados
   bool fileExists = SD.exists(filename);
@@ -5166,7 +5747,7 @@ void checkAlarms() {
   
   // Verificar si los sensores están en condiciones normales actualmente
   bool tempIsNormal = (temperature >= tempLimitMin && temperature <= tempLimitMax);
-  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitSet);
+  bool phIsNormal = (co2Active || co2InjectionActive || phValue >= phLimitMin);
   
   // Verificar alarma de temperatura
   tempAlarm = false;
@@ -5178,22 +5759,54 @@ void checkAlarms() {
       if (!alarmWasSilenced || (alarmWasSilenced && tempWasNormal)) {
         tempAlarm = true;
         shouldActivateAlarm = true;
-        Serial.println("ALARMA: Temperatura fuera de límites");
+        
+        // Solo registrar en SD si no se ha registrado previamente
+        if (!tempAlarmLogged) {
+          if (temperature < tempLimitMin) {
+            logAlarmToSD("Temperatura Baja", temperature);
+          } else {
+            logAlarmToSD("Temperatura Alta", temperature);
+          }
+          tempAlarmLogged = true;  // Marcar como registrada
+          Serial.println("ALARMA: Temperatura fuera de límites - Registrada en SD");
+        } else {
+          Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
+        }
       }
     }
   }
   
+  // Si la temperatura vuelve a normal, resetear el flag de logging
+  if (tempIsNormal && tempAlarmLogged) {
+    tempAlarmLogged = false;
+    Serial.println("Temperatura normalizada - Flag de registro reseteado");
+  }
+  
   // Verificar alarma de pH
   phAlarm = false;
-  if (!co2Active && !co2InjectionActive && phValue < phLimitSet) {
+  if (!co2Active && !co2InjectionActive && phValue < phLimitMin) {
     // Solo activar si:
     // 1. No fue silenciada, O
     // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente
     if (!alarmWasSilenced || (alarmWasSilenced && phWasNormal)) {
       phAlarm = true;
       shouldActivateAlarm = true;
-      Serial.println("ALARMA: pH bajo el límite fijado");
+      
+      // Solo registrar en SD si no se ha registrado previamente
+      if (!phAlarmLogged) {
+        logAlarmToSD("pH Bajo", phValue);
+        phAlarmLogged = true;  // Marcar como registrada
+        Serial.println("ALARMA: pH bajo el límite - Registrada en SD");
+      } else {
+        Serial.println("ALARMA: pH bajo el límite - Ya registrada");
+      }
     }
+  }
+  
+  // Si el pH vuelve a normal, resetear el flag de logging
+  if (phIsNormal && phAlarmLogged) {
+    phAlarmLogged = false;
+    Serial.println("pH normalizado - Flag de registro reseteado");
   }
   
   // Si todos los sensores vuelven a normal, resetear el flag de silenciado
@@ -5206,11 +5819,6 @@ void checkAlarms() {
   // Actualizar estados previos
   tempWasNormal = tempIsNormal;
   phWasNormal = phIsNormal;
-  
-  // La alarma de emergencia se maneja en handleEmergencyState()
-  if (emergencyAlarm) {
-    shouldActivateAlarm = true;
-  }
   
   // Activar o desactivar alarmas según corresponda
   if (shouldActivateAlarm && !alarmActive) {
@@ -5246,6 +5854,42 @@ void deactivateAlarm() {
   Serial.println("Alarma desactivada");
 }
 
+void logAlarmToSD(const char* alarmType, float value) {
+  File alarmFile = SD.open(ALARM_LOG_FILE, FILE_APPEND);
+  if (alarmFile) {
+    // Obtener fecha y hora
+    DateTime now = rtc.now();
+    
+    // Escribir fecha
+    alarmFile.print(now.year());
+    alarmFile.print("/");
+    if (now.month() < 10) alarmFile.print("0");
+    alarmFile.print(now.month());
+    alarmFile.print("/");
+    if (now.day() < 10) alarmFile.print("0");
+    alarmFile.print(now.day());
+    alarmFile.print(";");
+    
+    // Escribir hora
+    if (now.hour() < 10) alarmFile.print("0");
+    alarmFile.print(now.hour());
+    alarmFile.print(":");
+    if (now.minute() < 10) alarmFile.print("0");
+    alarmFile.print(now.minute());
+    alarmFile.print(":");
+    if (now.second() < 10) alarmFile.print("0");
+    alarmFile.print(now.second());
+    alarmFile.print(",");
+    alarmFile.print(alarmType);
+    alarmFile.print(",");
+    alarmFile.println(value);
+    alarmFile.close();
+    
+    Serial.print("Alarma registrada: ");
+    Serial.println(alarmType);
+  }
+}
+
 void handleEmergencyState() {
   static bool lastEmergencyState = false;
   bool currentEmergencyState = digitalRead(EMERGENCY_PIN) == HIGH;  // HIGH = presionado
@@ -5254,6 +5898,13 @@ void handleEmergencyState() {
   if (currentEmergencyState && !lastEmergencyState) {
     emergencyActive = true;
     emergencyAlarm = true;
+
+    // Registrar emergencia en SD (solo una vez por evento)
+    if (!emergencyAlarmLogged) {
+      logAlarmToSD("EMERGENCIA", 1.0);  // Valor 0 porque no es un sensor
+      emergencyAlarmLogged = true;
+      Serial.println("EMERGENCIA: Botón presionado - Registrada en SD");
+    }
 
     // Activar alarma de emergencia inmediatamente
     activateAlarm();
@@ -5290,6 +5941,10 @@ void handleEmergencyState() {
   else if (!currentEmergencyState && lastEmergencyState && emergencyActive) {
     emergencyActive = false;
     emergencyAlarm = false;
+    
+    // Resetear el flag para permitir registro de futuras emergencias
+    emergencyAlarmLogged = false;
+    Serial.println("Emergencia desactivada - Flag de registro reseteado");
     
     // Desactivar alarma de emergencia
     deactivateAlarm();
