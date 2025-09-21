@@ -56,8 +56,13 @@ let alarmState = {
 // Variable para límite de pH
 let phLimitMin = 6.0;
 
+let rtcDriftMs = 0;
+let rtcTickTimer = null;
+let rtcResyncTimer = null;
+
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
+    startRtcClock();
     initCharts();
     loadSequences();
     startDataUpdate();
@@ -1730,6 +1735,48 @@ async function cancelSchedule() {
   if (res.ok) updateSequenceStatus();
 }
 
+function formatRTC(d) {
+  const pad = n => String(n).padStart(2, '0');
+  const dd = pad(d.getDate());
+  const mm = pad(d.getMonth() + 1);
+  const yyyy = d.getFullYear();
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  const ss = pad(d.getSeconds());
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
+}
+
+async function startRtcClock() {
+  const el = document.getElementById('rtcClock');
+  if (!el) return;
+
+  const resync = async () => {
+    try {
+      const r = await fetch('/api/time/now', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const { epoch } = await r.json();
+      rtcDriftMs = (epoch * 1000) - Date.now();     // delta ESP32 vs navegador
+    } catch (e) {
+      // si falla, mantenemos el drift actual (se verá la hora del navegador)
+      console.warn('No se pudo leer el RTC:', e);
+    }
+  };
+
+  const tick = () => {
+    const now = new Date(Date.now() + rtcDriftMs);
+    el.textContent = formatRTC(now);
+  };
+
+  // primer sync + pintado inmediato
+  await resync();
+  tick();
+
+  clearInterval(rtcTickTimer);
+  rtcTickTimer = setInterval(tick, 1000);     // actualiza cada segundo
+
+  clearInterval(rtcResyncTimer);
+  rtcResyncTimer = setInterval(resync, 60000); // corrige drift cada 60 s
+}
 
 function closeModal() {
    document.getElementById('configModal').style.display = 'none';

@@ -1602,3 +1602,22 @@ h1 {
   margin-left: 8px;
 }
 .hint { display:block; color: var(--text-secondary); margin-top: 6px; font-size: 12px; }
+
+/* Layout del header: título a la izquierda, estado + reloj a la derecha */
+.app-header { display: flex; align-items: center; justify-content: space-between; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+
+/* Reloj del RTC */
+.rtc-clock {
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  /* colores acordes al tema; ajusta si usas variables */
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  min-width: 190px;           /* evita que “salte” */
+  text-align: center;
+  user-select: none;
+}

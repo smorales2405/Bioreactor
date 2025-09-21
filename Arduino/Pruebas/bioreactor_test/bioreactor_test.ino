@@ -31,6 +31,8 @@ LiquidCrystal_I2C lcd(0x27, 20, 4);
 // RTC DS3231
 RTC_DS3231 rtc;
 #define SQW_PIN 17  // Pin SQW del RTC
+// Zona horaria local respecto a UTC
+constexpr int32_t TZ_OFFSET_SEC = -5 * 3600;
 
 // ADC (pH / turbidez / señales analógicas)
 //Adafruit_ADS1115 ads;
@@ -118,7 +120,7 @@ struct SequenceSchedule {
   uint32_t startEpoch = 0;  // unixtime (segundos)
 } schedule;
 
-const char* SCHEDULE_FILE = "/sequence_schedule.json";
+const char* SCHEDULE_FILE = "/Secuencias/sequence_schedule.json";
 
 /**********************************
  *  4) SENSORES (Temperatura, pH, Turbidez/Concentración, Flujo)
@@ -1201,20 +1203,24 @@ void setupWebServer() {
       json += ",\"loopMode\":" + String(sequenceLoopMode ? "true" : "false");
       
       // Calcular tiempo transcurrido
-      DateTime now = rtc.now();
-      TimeSpan elapsed = now - stepStartTime;
-      int elapsedTotalSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
-                              elapsed.minutes() * 60 + elapsed.seconds();
-      int elapsedHours = elapsedTotalSeconds / 3600;
+      int32_t elapsedTotalSeconds =
+        (int32_t)(rtc.now().unixtime() - stepStartTime.unixtime());
+      if (elapsedTotalSeconds < 0) elapsedTotalSeconds = 0;
+
+      int elapsedHours   = elapsedTotalSeconds / 3600;
       int elapsedMinutes = (elapsedTotalSeconds % 3600) / 60;
       int elapsedSeconds = elapsedTotalSeconds % 60;
+      
+      // Total del paso actual (siempre positivo)
+      const auto &st = sequences[selectedSequence].steps[currentSequenceStep];
+      int totalSec = st.hours * 3600 + st.minutes * 60 + st.seconds;
 
       json += ",\"elapsedHours\":" + String(elapsedHours);
       json += ",\"elapsedMinutes\":" + String(elapsedMinutes);
       json += ",\"elapsedSeconds\":" + String(elapsedSeconds);
-      json += ",\"totalHours\":" + String(sequences[selectedSequence].steps[currentSequenceStep].hours);
-      json += ",\"totalMinutes\":" + String(sequences[selectedSequence].steps[currentSequenceStep].minutes);
-      json += ",\"totalSeconds\":" + String(sequences[selectedSequence].steps[currentSequenceStep].seconds);
+      json += ",\"totalHours\":" + String(totalSec / 3600);
+      json += ",\"totalMinutes\":" + String((totalSec % 3600) / 60);
+      json += ",\"totalSeconds\":" + String(totalSec % 60);
     } else if (schedule.active) {
     json += ",\"scheduled\":true";
     json += ",\"sequenceId\":" + String(schedule.seqId);
@@ -1224,7 +1230,7 @@ void setupWebServer() {
     json += ",\"scheduled\":false";
     }
     json += "}";
-    Serial.printf("STATUS running=%d, loop=%d, sel=%d step=%d\n", sequenceRunning, sequenceLoopMode, selectedSequence, currentSequenceStep);
+    //Serial.printf("STATUS running=%d, loop=%d, sel=%d step=%d\n", sequenceRunning, sequenceLoopMode, selectedSequence, currentSequenceStep);
     request->send(200, "application/json", json);
   });
   
@@ -1320,12 +1326,13 @@ void setupWebServer() {
   });
 
   server.on("/api/time/now", HTTP_GET, [](AsyncWebServerRequest *request){
-    DateTime now = rtc.now();
-    char iso[20]; // "YYYY-MM-DDTHH:MM"
-    snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d",
-            now.year(), now.month(), now.day(), now.hour(), now.minute());
+    uint32_t epoch_utc = rtc.now().unixtime() - TZ_OFFSET_SEC; 
     String json = "{";
-    json += "\"epoch\":" + String(now.unixtime());
+    json += "\"epoch\":" + String(epoch_utc);
+    char iso[25];
+    DateTime now = rtc.now();
+    snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+            now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
     json += ",\"iso\":\"" + String(iso) + "\"";
     json += "}";
     request->send(200, "application/json", json);
@@ -6049,8 +6056,8 @@ void checkAndRunSchedule() {
 
   if (!schedule.active || sequenceRunning) return;
 
-  DateTime now = rtc.now();
-  if (now.unixtime() >= schedule.startEpoch) {
+  uint32_t nowUtc = rtc.now().unixtime() - TZ_OFFSET_SEC;
+  if (nowUtc >= schedule.startEpoch) {
     // Validación por si la secuencia quedó no configurada
     if (schedule.seqId >= 0 && schedule.seqId < 10 && sequences[schedule.seqId].configured) {
       selectedSequence = schedule.seqId;
