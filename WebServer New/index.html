@@ -216,9 +216,14 @@
             <div id="sequences" class="led-content">
                 <div class="sequence-status" id="sequenceStatus">
                     <p>Estado: <span id="seqStatusText">Inactivo</span></p>
-                    <button class="btn btn-danger" id="stopSeqBtn" onclick="stopSequence()" style="display:none;">
+                    <div class="status-actions">
+                        <button class="btn btn-warning" id="cancelScheduleBtn" onclick="cancelSchedule()" style="display:none;">
+                        Cancelar Programación
+                        </button>
+                        <button class="btn btn-danger" id="stopSeqBtn" onclick="stopSequence()" style="display:none;">
                         Detener Secuencia
-                    </button>
+                        </button>
+                    </div>
                 </div>
 
                 <div class="sequences-grid" id="sequencesList">
@@ -597,6 +602,30 @@
             <div class="modal-actions">
                 <button class="btn btn-primary" onclick="savePhLimit()">Guardar</button>
                 <button class="btn btn-secondary" onclick="closePhLimitModal()">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: opciones de ejecución -->
+    <div id="runOptionsModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeRunOptions()">&times;</span>
+            <h2>Ejecutar Secuencia</h2>
+
+            <div class="option-row">
+            <button class="btn btn-primary" id="runNowBtn">Realizar ahora</button>
+            <button class="btn btn-secondary" id="openScheduleBtn">Programar ejecución</button>
+            </div>
+
+            <div id="schedulePanel" class="schedule-panel" style="display:none;">
+            <label for="scheduleDateTime">Fecha y hora de inicio:</label>
+            <input type="datetime-local" id="scheduleDateTime" step="1">
+            <small id="scheduleHint" class="hint"></small>
+
+            <div class="modal-actions">
+                <button class="btn btn-primary" onclick="confirmSchedule()">Guardar programación</button>
+                <button class="btn btn-secondary" onclick="closeRunOptions()">Cancelar</button>
+            </div>
             </div>
         </div>
     </div>

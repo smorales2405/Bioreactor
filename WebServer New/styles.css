@@ -1582,3 +1582,23 @@ h1 {
 }
 
 .sequence-status { gap: 12px; }
+
+.sequence-status { gap: 12px; }
+.sequence-status .status-actions { display: flex; gap: 10px; align-items: center; }
+
+.option-row { display: flex; gap: 12px; margin: 10px 0 18px; flex-wrap: wrap; }
+.schedule-panel {
+  background: var(--surface-light);
+  padding: 15px;
+  border-radius: 10px;
+}
+.schedule-panel input[type="datetime-local"] {
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 8px;
+  border-radius: 6px;
+  margin-left: 8px;
+}
+.hint { display:block; color: var(--text-secondary); margin-top: 6px; font-size: 12px; }

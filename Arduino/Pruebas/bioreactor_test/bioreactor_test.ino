@@ -33,7 +33,7 @@ RTC_DS3231 rtc;
 #define SQW_PIN 17  // Pin SQW del RTC
 
 // ADC (pH / turbidez / señales analógicas)
-Adafruit_ADS1115 ads;
+//Adafruit_ADS1115 ads;
 
 // Termómetro PT100 con MAX31865 (SPI por software)
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
@@ -42,7 +42,7 @@ Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, 
 
 // PCF8574 (I2C)
 PCF8574 pcfInput(0x20);
-PCF8574 pcfOutput(0x21);
+//PCF8574 pcfOutput(0x21);
 
 // Encoder rotatorio
 #define ENCODER_CLK 34
@@ -109,6 +109,16 @@ DateTime  sequenceStartTime;
 DateTime  stepStartTime;
 uint32_t  SavedStepStartTime = 0;
 volatile bool rtcInterrupt   = false;
+
+// ===== Programación de secuencias (persistente en SD) =====
+struct SequenceSchedule {
+  bool     active = false;
+  int      seqId  = -1;     // 0..9
+  bool     loop   = false;  // true = bucle
+  uint32_t startEpoch = 0;  // unixtime (segundos)
+} schedule;
+
+const char* SCHEDULE_FILE = "/sequence_schedule.json";
 
 /**********************************
  *  4) SENSORES (Temperatura, pH, Turbidez/Concentración, Flujo)
@@ -590,6 +600,11 @@ void loop() {
     updateDisplay();
   }
 
+  if (!sequenceRunning && rtcInterrupt) {
+    rtcInterrupt = false;
+    checkAndRunSchedule();
+  }
+
   if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE && millis() - lastSensorRead > 1000) {
   updateDisplay();
   }
@@ -625,6 +640,8 @@ void saveSystemState() {
 
 void loadSystemState() {
   
+  loadScheduleFromSD();
+
   // Cargar estado de secuencia
   bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
   if (wasSequenceRunning) {
@@ -1198,6 +1215,13 @@ void setupWebServer() {
       json += ",\"totalHours\":" + String(sequences[selectedSequence].steps[currentSequenceStep].hours);
       json += ",\"totalMinutes\":" + String(sequences[selectedSequence].steps[currentSequenceStep].minutes);
       json += ",\"totalSeconds\":" + String(sequences[selectedSequence].steps[currentSequenceStep].seconds);
+    } else if (schedule.active) {
+    json += ",\"scheduled\":true";
+    json += ",\"sequenceId\":" + String(schedule.seqId);
+    json += ",\"loopMode\":" + String(schedule.loop ? "true":"false");
+    json += ",\"startEpoch\":" + String(schedule.startEpoch);
+    } else {
+    json += ",\"scheduled\":false";
     }
     json += "}";
     Serial.printf("STATUS running=%d, loop=%d, sel=%d step=%d\n", sequenceRunning, sequenceLoopMode, selectedSequence, currentSequenceStep);
@@ -1293,6 +1317,58 @@ void setupWebServer() {
       Serial.printf("Secuencia %d marcada como no configurada (archivo no encontrado)\n", seqId + 1);
       request->send(200, "text/plain", "No file, state cleared");
     }
+  });
+
+  server.on("/api/time/now", HTTP_GET, [](AsyncWebServerRequest *request){
+    DateTime now = rtc.now();
+    char iso[20]; // "YYYY-MM-DDTHH:MM"
+    snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d",
+            now.year(), now.month(), now.day(), now.hour(), now.minute());
+    String json = "{";
+    json += "\"epoch\":" + String(now.unixtime());
+    json += ",\"iso\":\"" + String(iso) + "\"";
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_POST, [](AsyncWebServerRequest *request){
+  if (!(request->hasParam("id", true) && request->hasParam("loop", true) && request->hasParam("epoch", true))) {
+    request->send(400, "text/plain", "Missing params");
+    return;
+  }
+  int id   = request->getParam("id",   true)->value().toInt();
+  bool lp  = request->getParam("loop", true)->value().toInt() == 1;
+  uint32_t ep = (uint32_t) strtoul(request->getParam("epoch", true)->value().c_str(), nullptr, 10);
+
+  if (id < 0 || id >= 10 || !sequences[id].configured) {
+    request->send(400, "text/plain", "Invalid id or not configured");
+    return;
+  }
+  if (ep <= rtc.now().unixtime()) { // no permitir pasado
+    request->send(400, "text/plain", "Epoch must be in the future");
+    return;
+  }
+  schedule.active = true; schedule.seqId = id; schedule.loop = lp; schedule.startEpoch = ep;
+  saveScheduleToSD();
+  request->send(200, "text/plain", "Scheduled");
+  Serial.printf("Programada secuencia %d para %u (loop=%d)\n", id+1, ep, lp);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"active\":" + String(schedule.active ? "true":"false");
+    if (schedule.active) {
+      json += ",\"seqId\":" + String(schedule.seqId);
+      json += ",\"loop\":" + String(schedule.loop ? "true":"false");
+      json += ",\"startEpoch\":" + String(schedule.startEpoch);
+    }
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_DELETE, [](AsyncWebServerRequest *request){
+    clearSchedule();
+    request->send(200, "text/plain", "Schedule cleared");
   });
 
   // Control de Aireación
@@ -5932,6 +6008,58 @@ void logAlarmToSD(const char* alarmType, float value) {
     
     Serial.print("Alarma registrada: ");
     Serial.println(alarmType);
+  }
+}
+
+void saveScheduleToSD() {
+  StaticJsonDocument<192> doc;
+  doc["active"]     = schedule.active;
+  doc["seqId"]      = schedule.seqId;
+  doc["loop"]       = schedule.loop;
+  doc["startEpoch"] = schedule.startEpoch;
+
+  SD.remove(SCHEDULE_FILE);                    
+  File f = SD.open(SCHEDULE_FILE, FILE_WRITE);
+  if (!f) { Serial.println("saveScheduleToSD: open fail"); return; }
+  serializeJson(doc, f);
+  f.close();
+}
+
+void loadScheduleFromSD() {
+  if (!SD.exists(SCHEDULE_FILE)) { schedule = SequenceSchedule(); return; }
+  File f = SD.open(SCHEDULE_FILE, FILE_READ);
+  if (!f) { schedule = SequenceSchedule(); return; }
+  StaticJsonDocument<192> doc;
+  auto err = deserializeJson(doc, f);
+  f.close();
+  if (err) { schedule = SequenceSchedule(); return; }
+
+  schedule.active     = doc["active"]    | false;
+  schedule.seqId      = doc["seqId"]     | -1;
+  schedule.loop       = doc["loop"]      | false;
+  schedule.startEpoch = doc["startEpoch"]| 0;
+}
+
+void clearSchedule() {
+  schedule = SequenceSchedule();
+  saveScheduleToSD();
+}
+
+void checkAndRunSchedule() {
+
+  if (!schedule.active || sequenceRunning) return;
+
+  DateTime now = rtc.now();
+  if (now.unixtime() >= schedule.startEpoch) {
+    // Validación por si la secuencia quedó no configurada
+    if (schedule.seqId >= 0 && schedule.seqId < 10 && sequences[schedule.seqId].configured) {
+      selectedSequence = schedule.seqId;
+      sequenceLoopMode = schedule.loop;
+      startSequence();
+      Serial.println("Secuencia iniciada por programación");
+    }
+    // Borra la programación al disparar
+    clearSchedule();
   }
 }
 

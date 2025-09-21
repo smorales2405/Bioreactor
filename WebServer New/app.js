@@ -8,6 +8,7 @@ let sensorData = {
 let sequenceRunning = false;
 let currentSequence = null;
 let sequences = [];
+let runOpt = { id: null, loop: false, nowEpoch: null };
 
 // Charts
 let tempChart = null;
@@ -811,11 +812,11 @@ async function loadSequences() {
                <div class="sequence-actions">
                     ${seq.configured ? 
                         `<div class="sequence-buttons">
-                            <button class="btn btn-primary" onclick="startSequence(${seq.id}, false)" title="Ejecutar una sola vez">
-                                <span>▶</span> 1 vez
+                            <button class="btn btn-primary" onclick="openRunOptions(${seq.id}, false)">
+                            <span>▶</span> 1 vez
                             </button>
-                            <button class="btn btn-success" onclick="startSequence(${seq.id}, true)" title="Ejecutar continuamente">
-                                <span>🔁</span> Bucle
+                            <button class="btn btn-success" onclick="openRunOptions(${seq.id}, true)">
+                            <span>🔁</span> Bucle
                             </button>
                         </div>` : 
                         ''}
@@ -842,6 +843,7 @@ async function updateSequenceStatus() {
        
        const statusText = document.getElementById('seqStatusText');
        const stopBtn = document.getElementById('stopSeqBtn');
+       const cancelBtn = document.getElementById('cancelScheduleBtn');
        
        if (data.running) {
            sequenceRunning = true;
@@ -850,11 +852,27 @@ async function updateSequenceStatus() {
                                   (${data.elapsedHours}h ${data.elapsedMinutes}m ${data.elapsedSeconds}s / 
                                    ${data.totalHours}h ${data.totalMinutes}m ${data.totalSeconds}s)`;
            stopBtn.style.display = 'inline-block';
+           cancelBtn.style.display = 'none';
+           return;
        } else {
            sequenceRunning = false;
            statusText.textContent = 'Inactivo';
            stopBtn.style.display = 'none';
        }
+
+        if (data.scheduled) {
+        const when = new Date((data.startEpoch || 0) * 1000);
+        const modeText = data.loopMode ? ' (Bucle)' : ' (1 vez)';
+        statusText.textContent =
+            `Programada Secuencia ${data.sequenceId + 1}${modeText} – Inicio: ${when.toLocaleString()}`;
+        stopBtn.style.display = 'none';
+        cancelBtn.style.display = 'inline-block';
+        } else {
+        statusText.textContent = 'Inactivo';
+        stopBtn.style.display = 'none';
+        cancelBtn.style.display = 'none';
+        }       
+
    } catch (error) {
        console.error('Error obteniendo estado de secuencia:', error);
    }
@@ -1636,6 +1654,82 @@ document.getElementById('phMinSlider')?.addEventListener('input', function() {
     phLimitMin = parseFloat(this.value);
     updatePhLimitPreview();
 });
+
+async function openRunOptions(id, loop) {
+  runOpt.id = id;
+  runOpt.loop = !!loop;
+
+  // Trae hora del RTC para min y valor por defecto
+  try {
+    const res = await fetch('/api/time/now', { cache: 'no-store' });
+    const t = await res.json();
+    runOpt.nowEpoch = t.epoch;
+
+    const dt = document.getElementById('scheduleDateTime');
+    dt.min = t.iso;                             // "YYYY-MM-DDTHH:MM"
+    dt.value = t.iso;                           // por defecto ahora (ajusta a gusto +1 min)
+    document.getElementById('scheduleHint').textContent =
+      'La hora se basa en el RTC del equipo.';
+  } catch (e) {
+    console.warn('No se pudo leer RTC, uso hora local del navegador');
+    const dt = document.getElementById('scheduleDateTime');
+    const now = new Date();
+    const iso = now.toISOString().slice(0,16); // YYYY-MM-DDTHH:MM (UTC)
+    dt.min = iso; dt.value = iso;
+  }
+
+  document.getElementById('schedulePanel').style.display = 'none';
+  document.getElementById('runOptionsModal').style.display = 'block';
+
+  // Botones
+  document.getElementById('runNowBtn').onclick = () => {
+    closeRunOptions();
+    startSequence(runOpt.id, runOpt.loop);  // tu función existente
+  };
+  document.getElementById('openScheduleBtn').onclick = () => {
+    document.getElementById('schedulePanel').style.display = 'block';
+  };
+}
+
+function closeRunOptions() {
+  document.getElementById('runOptionsModal').style.display = 'none';
+}
+
+async function confirmSchedule() {
+  const dt = document.getElementById('scheduleDateTime').value; // "YYYY-MM-DDTHH:MM(:SS?)"
+  if (!dt) { alert('Selecciona fecha y hora'); return; }
+
+  // Convierte a epoch (segundos). Asumimos hora local del navegador.
+  const epoch = Math.floor(new Date(dt).getTime() / 1000);
+
+  // Valida contra el RTC (si lo tenemos)
+  if (runOpt.nowEpoch && epoch <= runOpt.nowEpoch) {
+    alert('La hora debe ser posterior a la actual del equipo.');
+    return;
+  }
+
+  // Enviar programación
+  const body = `id=${encodeURIComponent(runOpt.id)}&loop=${runOpt.loop?1:0}&epoch=${epoch}`;
+  const res = await fetch('/api/sequence/schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body
+  });
+  const msg = await res.text();
+  if (!res.ok) {
+    alert(`No se pudo programar: ${msg || res.status}`); return;
+  }
+
+  closeRunOptions();
+  updateSequenceStatus();      // refresca barra de estado
+  alert(`Secuencia ${runOpt.id + 1} programada correctamente.`);
+}
+
+async function cancelSchedule() {
+  const res = await fetch('/api/sequence/schedule', { method: 'DELETE' });
+  if (res.ok) updateSequenceStatus();
+}
+
 
 function closeModal() {
    document.getElementById('configModal').style.display = 'none';
