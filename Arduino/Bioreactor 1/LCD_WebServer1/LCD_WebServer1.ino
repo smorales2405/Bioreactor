@@ -31,6 +31,8 @@ LiquidCrystal_I2C lcd(0x27, 20, 4);
 // RTC DS3231
 RTC_DS3231 rtc;
 #define SQW_PIN 17  // Pin SQW del RTC
+// Zona horaria local respecto a UTC
+constexpr int32_t TZ_OFFSET_SEC = -5 * 3600;
 
 // ADC (pH / turbidez / señales analógicas)
 Adafruit_ADS1115 ads;
@@ -109,6 +111,16 @@ DateTime  sequenceStartTime;
 DateTime  stepStartTime;
 uint32_t  SavedStepStartTime = 0;
 volatile bool rtcInterrupt   = false;
+
+// ===== Programación de secuencias (persistente en SD) =====
+struct SequenceSchedule {
+  bool     active = false;
+  int      seqId  = -1;     // 0..9
+  bool     loop   = false;  // true = bucle
+  uint32_t startEpoch = 0;  // unixtime (segundos)
+} schedule;
+
+const char* SCHEDULE_FILE = "/Secuencias/sequence_schedule.json";
 
 /**********************************
  *  4) SENSORES (Temperatura, pH, Turbidez/Concentración, Flujo)
@@ -422,13 +434,14 @@ void setup() {
   pcfOutput.digitalWrite(P3, HIGH);
   pcfOutput.digitalWrite(P4, HIGH);
   pcfOutput.begin();
-  
+
   // Configurar PWM para cada LED
   for (int i = 0; i < numLeds; i++) {
     ledcAttachChannel(ledPins[i], pwmFreq, pwmResolution, ledChannels[i]);
     ledcWrite(ledPins[i], 0);
   }
-  
+  Serial.println("Leds Inicializados");
+
   //Buzzer
   ledcAttachChannel(BUZZER_PIN, 2000, pwmResolution, 5); // 2kHz frecuencia, 8 bits resolución
   ledcWrite(BUZZER_PIN, 0); // Inicialmente apagado
@@ -469,13 +482,13 @@ void setup() {
     lcd.setCursor(10, 2);
     lcd.print("ADC OK");
   }
-  
+
   //delay(15000);
 
   // Inicializar SD
   lcd.setCursor(0, 3);
   sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  //delay(3000);
+  delay(3000);
   if (!SD.begin(SD_CS, sdSPI)) {
     Serial.println("Error al inicializar SD");
     lcd.print("SD Card Error!");
@@ -585,6 +598,11 @@ void loop() {
     updateDisplay();
   }
 
+  if (!sequenceRunning && rtcInterrupt) {
+    rtcInterrupt = false;
+    checkAndRunSchedule();
+  }
+
   if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE && millis() - lastSensorRead > 1000) {
   updateDisplay();
   }
@@ -604,8 +622,10 @@ void saveSystemState() {
   EEPROM.write(EEPROM_SEQUENCE_ID, selectedSequence);
   EEPROM.write(EEPROM_SEQUENCE_STEP, currentSequenceStep);
   SavedStepStartTime = stepStartTime.unixtime();
+  Serial.print("Guardando tiempo de Secuencia: ");
+  Serial.println(SavedStepStartTime);
   EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
-
+  
   // Guardar estados de aireación y CO2
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
   EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
@@ -618,6 +638,8 @@ void saveSystemState() {
 
 void loadSystemState() {
   
+  loadScheduleFromSD();
+
   // Cargar estado de secuencia
   bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
   if (wasSequenceRunning) {
@@ -626,27 +648,31 @@ void loadSystemState() {
     sequenceLoopMode = EEPROM.read(EEPROM_SEQUENCE_LOOP) == 1;
     EEPROM.get(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
     stepStartTime = DateTime(SavedStepStartTime);
-    
+
     // Verificar si la secuencia es válida antes de reanudar
     if (selectedSequence < 10 && sequences[selectedSequence].configured) {
       sequenceRunning = true;
       //stepStartTime = rtc.now();
       applySequenceStep(currentSequenceStep);
-      
-      Serial.println("Reanudando secuencia tras reinicio");
+      Serial.print("Reanudando Secuencia ");
+      Serial.print(selectedSequence + 1);
+      Serial.print(" Paso ");
+      Serial.print(currentSequenceStep + 1);
+      Serial.println(" tras reinicio");
     }
   } else {
       // Cargar estados de LEDs
-      for (int i = 0; i < 4; i++) {
-        ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
-        pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
-        
-        // Aplicar valores a los LEDs
-        if (ledStates[i]) {
-          int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
-          ledcWrite(ledPins[i], pwmValue);
-        }
-      }
+    for (int i = 0; i < 4; i++) {
+    ledStates[i] = EEPROM.read(EEPROM_LED_STATES + i) == 1;
+    pwmValues[i] = EEPROM.read(EEPROM_LED_PWM + i);
+    
+    // Aplicar valores a los LEDs
+    if (ledStates[i]) {
+      int pwmValue = map(pwmValues[i] * 5, 0, 100, 0, 255);
+      ledcWrite(ledPins[i], pwmValue);
+    }
+    }
+    Serial.println("Intensidades aplicados a LEDs - No Secuencia");
   }
   
   // Cargar y aplicar estados de aireación y CO2
@@ -1173,22 +1199,34 @@ void setupWebServer() {
       json += ",\"loopMode\":" + String(sequenceLoopMode ? "true" : "false");
       
       // Calcular tiempo transcurrido
-      DateTime now = rtc.now();
-      TimeSpan elapsed = now - stepStartTime;
-      int elapsedTotalSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
-                              elapsed.minutes() * 60 + elapsed.seconds();
-      int elapsedHours = elapsedTotalSeconds / 3600;
+      int32_t elapsedTotalSeconds =
+        (int32_t)(rtc.now().unixtime() - stepStartTime.unixtime());
+      if (elapsedTotalSeconds < 0) elapsedTotalSeconds = 0;
+
+      int elapsedHours   = elapsedTotalSeconds / 3600;
       int elapsedMinutes = (elapsedTotalSeconds % 3600) / 60;
       int elapsedSeconds = elapsedTotalSeconds % 60;
+      
+      // Total del paso actual (siempre positivo)
+      const auto &st = sequences[selectedSequence].steps[currentSequenceStep];
+      int totalSec = st.hours * 3600 + st.minutes * 60 + st.seconds;
 
       json += ",\"elapsedHours\":" + String(elapsedHours);
       json += ",\"elapsedMinutes\":" + String(elapsedMinutes);
       json += ",\"elapsedSeconds\":" + String(elapsedSeconds);
-      json += ",\"totalHours\":" + String(sequences[selectedSequence].steps[currentSequenceStep].hours);
-      json += ",\"totalMinutes\":" + String(sequences[selectedSequence].steps[currentSequenceStep].minutes);
-      json += ",\"totalSeconds\":" + String(sequences[selectedSequence].steps[currentSequenceStep].seconds);
+      json += ",\"totalHours\":" + String(totalSec / 3600);
+      json += ",\"totalMinutes\":" + String((totalSec % 3600) / 60);
+      json += ",\"totalSeconds\":" + String(totalSec % 60);
+    } else if (schedule.active) {
+    json += ",\"scheduled\":true";
+    json += ",\"sequenceId\":" + String(schedule.seqId);
+    json += ",\"loopMode\":" + String(schedule.loop ? "true":"false");
+    json += ",\"startEpoch\":" + String(schedule.startEpoch);
+    } else {
+    json += ",\"scheduled\":false";
     }
     json += "}";
+    //Serial.printf("STATUS running=%d, loop=%d, sel=%d step=%d\n", sequenceRunning, sequenceLoopMode, selectedSequence, currentSequenceStep);
     request->send(200, "application/json", json);
   });
   
@@ -1283,7 +1321,60 @@ void setupWebServer() {
     }
   });
 
-    // Control de Aireación
+  server.on("/api/time/now", HTTP_GET, [](AsyncWebServerRequest *request){
+    uint32_t epoch_utc = rtc.now().unixtime() - TZ_OFFSET_SEC; 
+    String json = "{";
+    json += "\"epoch\":" + String(epoch_utc);
+    char iso[25];
+    DateTime now = rtc.now();
+    snprintf(iso, sizeof(iso), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+            now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second());
+    json += ",\"iso\":\"" + String(iso) + "\"";
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_POST, [](AsyncWebServerRequest *request){
+  if (!(request->hasParam("id", true) && request->hasParam("loop", true) && request->hasParam("epoch", true))) {
+    request->send(400, "text/plain", "Missing params");
+    return;
+  }
+  int id   = request->getParam("id",   true)->value().toInt();
+  bool lp  = request->getParam("loop", true)->value().toInt() == 1;
+  uint32_t ep = (uint32_t) strtoul(request->getParam("epoch", true)->value().c_str(), nullptr, 10);
+
+  if (id < 0 || id >= 10 || !sequences[id].configured) {
+    request->send(400, "text/plain", "Invalid id or not configured");
+    return;
+  }
+  if (ep <= rtc.now().unixtime()) { // no permitir pasado
+    request->send(400, "text/plain", "Epoch must be in the future");
+    return;
+  }
+  schedule.active = true; schedule.seqId = id; schedule.loop = lp; schedule.startEpoch = ep;
+  saveScheduleToSD();
+  request->send(200, "text/plain", "Scheduled");
+  Serial.printf("Programada secuencia %d para %u (loop=%d)\n", id+1, ep, lp);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "{";
+    json += "\"active\":" + String(schedule.active ? "true":"false");
+    if (schedule.active) {
+      json += ",\"seqId\":" + String(schedule.seqId);
+      json += ",\"loop\":" + String(schedule.loop ? "true":"false");
+      json += ",\"startEpoch\":" + String(schedule.startEpoch);
+    }
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/api/sequence/schedule", HTTP_DELETE, [](AsyncWebServerRequest *request){
+    clearSchedule();
+    request->send(200, "text/plain", "Schedule cleared");
+  });
+
+  // Control de Aireación
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
     pcfOutput.digitalWrite(P2, LOW);
@@ -1833,6 +1924,7 @@ void incrementCursor() {
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
+        Serial.println("Intensidad aplicada a LED");
       }
       break;
       
@@ -2049,6 +2141,7 @@ void decrementCursor() {
         int intensity = menuCursor * 5;  // Cambiar de 10 a 5
         int pwmValue = map(intensity, 0, 100, 0, 255);
         ledcWrite(ledPins[selectedLed], pwmValue);
+        Serial.println("Intensidad aplicada a LED");
       }
       break;
       
@@ -2515,11 +2608,13 @@ void handleSelection() {
         ledStates[selectedLed] = true;
         pwmValues[selectedLed] = 20;  // AGREGAR ESTA LÍNEA
         ledcWrite(ledPins[selectedLed], 255);  // CAMBIAR de 'pwmValues[selectedAction]' a '255'
+        Serial.println("Prender LED");
       } else {
         // OFF
         ledStates[selectedLed] = false;
         pwmValues[selectedLed] = 0;
         ledcWrite(ledPins[selectedLed], 0);
+        Serial.println("Apagar LED");
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
@@ -2531,6 +2626,7 @@ void handleSelection() {
       ledStates[selectedLed] = (menuCursor > 0);
       //int pwmValue = map(intensity, 0, 100, 0, 255);
       ledcWrite(ledPins[selectedLed], map(menuCursor*5, 0, 100, 0, 255));
+      Serial.println("Intensidad aplicada a LED");
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
       saveSystemState();
@@ -2611,6 +2707,7 @@ void handleSelection() {
         } else {
           for (int i = 0; i < numLeds; i++) {
             ledcWrite(ledPins[i], 0);
+            Serial.println("Apagar LED en configuración");
           }
           menuCursor = 0;
         }
@@ -2694,6 +2791,7 @@ void handleSelection() {
       if (menuCursor == 0) {
         for (int i = 0; i < numLeds; i++) {
           ledcWrite(ledPins[i], 0);
+          Serial.println("Apagar LEDs luego de configuración");
         }
         currentMenu = MENU_SEQ_LIST;
         menuCursor = selectedSequence;
@@ -2744,6 +2842,7 @@ void handleSelection() {
     case MENU_LLENADO_SET_VOLUME:
       currentMenu = MENU_LLENADO_CONFIRM;
       menuCursor = 1; // Por defecto en NO
+      saveSystemState();
       break;
 
     case MENU_LLENADO_CONFIRM:
@@ -2756,12 +2855,12 @@ void handleSelection() {
         currentMenu = MENU_LLENADO;
         menuCursor = 1;
       }
-      saveSystemState();
       break;
 
     case MENU_LLENADO_ACTIVE:
       currentMenu = MENU_LLENADO_STOP_CONFIRM;
       menuCursor = 1;
+      saveSystemState();
       break;
 
     case MENU_LLENADO_STOP_CONFIRM:
@@ -2791,7 +2890,6 @@ void handleSelection() {
       // En ambos casos volver al menú llenado
       currentMenu = MENU_LLENADO;
       menuCursor = 0;
-      saveSystemState();
       break;
 
     case MENU_AIREACION:
@@ -3937,10 +4035,12 @@ void updateColorPreview() {
     
     int pwmValue = map(intensity, 0, 100, 0, 255);
     ledcWrite(ledPins[i], pwmValue);
+    Serial.println("Prender LED en Color Preview");
   }
   
   for (int i = currentColorConfig + 1; i < numLeds; i++) {
     ledcWrite(ledPins[i], 0);
+    Serial.println("Apagar LED en Color Preview");
   }
 }
 
@@ -3952,6 +4052,7 @@ void setLED(int index, bool state, int intensity) {
   
   int pwmValue = map(intensity, 0, 100, 0, 255);
   ledcWrite(ledPins[index], state ? pwmValue : 0);
+  Serial.println("Prender LED en Webserver");
   
   // Actualizar LCD si estamos en el menú correspondiente
   if (currentMenu == MENU_LED_SELECT || currentMenu == MENU_ONOFF || currentMenu == MENU_INTENSITY) {
@@ -3975,7 +4076,9 @@ void startSequence() {
   for (int i = 0; i < numLeds; i++) {
     ledcWrite(ledPins[i], 0);
   }
-  
+  Serial.println("Apagar LEDs para iniciar Secuencia");
+  delay(100);
+
   applySequenceStep(0);
   currentMenu = MENU_SEQ_RUNNING;
   
@@ -3999,6 +4102,13 @@ void stopSequence() {
 }
 
 void applySequenceStep(int step) {
+
+  Serial.print("Secuencia ");
+  Serial.print(selectedSequence + 1);
+  Serial.print(" Paso ");
+  Serial.print(step + 1);
+  Serial.print(": ");
+
   for (int i = 0; i < 4; i++) {
     int intensity = sequences[selectedSequence].steps[step].colorIntensity[i];
     int pwmValue = map(intensity, 0, 100, 0, 255);
@@ -4006,12 +4116,12 @@ void applySequenceStep(int step) {
     delay(100);
     ledStates[i] = intensity > 0;
     pwmValues[i] = intensity/5;
-    
+
     Serial.print(ledNames[i]);
     Serial.print(":");
     Serial.print(ledcRead(ledPins[i]));
     Serial.print(" ");
-
+    
   }
   Serial.println();
   saveSystemState();
@@ -4021,6 +4131,14 @@ void checkSequenceProgress() {
   if (!sequenceRunning) return;
   
   DateTime now = rtc.now();
+  //Serial.print("Tiempo actual: ");
+  String dataLine1 = String(now.year()) + "/" + String(now.month()) + "/" + String(now.day()) + ", ";
+  dataLine1 += String(now.hour()) + ":" + String(now.minute()) + ":" + String(now.second());
+  //Serial.print(dataLine1);
+  //Serial.print(" / Tiempo de Inicio: ");
+  String dataLine2 = String(stepStartTime.year()) + "/" + String(stepStartTime.month()) + "/" + String(stepStartTime.day()) + ", ";
+  dataLine2 += String(stepStartTime.hour()) + ":" + String(stepStartTime.minute()) + ":" + String(stepStartTime.second());
+  //Serial.println(dataLine2);
   TimeSpan elapsed = now - stepStartTime;
   
   int totalSeconds = sequences[selectedSequence].steps[currentSequenceStep].hours * 3600 + 
@@ -4028,13 +4146,19 @@ void checkSequenceProgress() {
                      sequences[selectedSequence].steps[currentSequenceStep].seconds;
   int elapsedSeconds = elapsed.days() * 86400 + elapsed.hours() * 3600 + 
                        elapsed.minutes() * 60 + elapsed.seconds();
-  
+  //Serial.print("Segundos transcurridos: ");
+  //Serial.print(elapsedSeconds);
+  //Serial.print(" / Segundos totales: ");
+  //Serial.println(totalSeconds);
+
   if (elapsedSeconds >= totalSeconds) {
     for (int i = 0; i < numLeds; i++) {
       ledcWrite(ledPins[i], 0);
+      Serial.println("Apagar secuencia por tiempo");
     }
     
     currentSequenceStep++;
+    Serial.println("Siguiente Step en Secuencia");
     
     if (currentSequenceStep >= sequences[selectedSequence].stepCount) {
       if (sequenceLoopMode) {
@@ -5007,9 +5131,8 @@ void displayTurbCalibrating() {
 
 float getTurbidityVoltage() {
   // TODO: Leer del sensor de turbidez conectado al ADC
-  //int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
-  //float voltage = ads.computeVolts(adc);
-  float voltage = 0.0;
+  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
+  float voltage = ads.computeVolts(adc);
   return voltage;
 }
 
@@ -5218,9 +5341,8 @@ void displayPhCalibrating() {
 
 float getPhVoltage() {
   // Leer del sensor de pH conectado al ADC
-  //int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
-  //float voltage = ads.computeVolts(adc);
-  float voltage = 0.0;
+  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
+  float voltage = ads.computeVolts(adc);
   return voltage;
 }
 
@@ -5770,7 +5892,7 @@ void checkAlarms() {
           tempAlarmLogged = true;  // Marcar como registrada
           Serial.println("ALARMA: Temperatura fuera de límites - Registrada en SD");
         } else {
-          Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
+          //Serial.println("ALARMA: Temperatura fuera de límites - Ya registrada");
         }
       }
     }
@@ -5798,7 +5920,7 @@ void checkAlarms() {
         phAlarmLogged = true;  // Marcar como registrada
         Serial.println("ALARMA: pH bajo el límite - Registrada en SD");
       } else {
-        Serial.println("ALARMA: pH bajo el límite - Ya registrada");
+        //Serial.println("ALARMA: pH bajo el límite - Ya registrada");
       }
     }
   }
@@ -5890,6 +6012,58 @@ void logAlarmToSD(const char* alarmType, float value) {
   }
 }
 
+void saveScheduleToSD() {
+  StaticJsonDocument<192> doc;
+  doc["active"]     = schedule.active;
+  doc["seqId"]      = schedule.seqId;
+  doc["loop"]       = schedule.loop;
+  doc["startEpoch"] = schedule.startEpoch;
+
+  SD.remove(SCHEDULE_FILE);                    
+  File f = SD.open(SCHEDULE_FILE, FILE_WRITE);
+  if (!f) { Serial.println("saveScheduleToSD: open fail"); return; }
+  serializeJson(doc, f);
+  f.close();
+}
+
+void loadScheduleFromSD() {
+  if (!SD.exists(SCHEDULE_FILE)) { schedule = SequenceSchedule(); return; }
+  File f = SD.open(SCHEDULE_FILE, FILE_READ);
+  if (!f) { schedule = SequenceSchedule(); return; }
+  StaticJsonDocument<192> doc;
+  auto err = deserializeJson(doc, f);
+  f.close();
+  if (err) { schedule = SequenceSchedule(); return; }
+
+  schedule.active     = doc["active"]    | false;
+  schedule.seqId      = doc["seqId"]     | -1;
+  schedule.loop       = doc["loop"]      | false;
+  schedule.startEpoch = doc["startEpoch"]| 0;
+}
+
+void clearSchedule() {
+  schedule = SequenceSchedule();
+  saveScheduleToSD();
+}
+
+void checkAndRunSchedule() {
+
+  if (!schedule.active || sequenceRunning) return;
+
+  uint32_t nowUtc = rtc.now().unixtime() - TZ_OFFSET_SEC;
+  if (nowUtc >= schedule.startEpoch) {
+    // Validación por si la secuencia quedó no configurada
+    if (schedule.seqId >= 0 && schedule.seqId < 10 && sequences[schedule.seqId].configured) {
+      selectedSequence = schedule.seqId;
+      sequenceLoopMode = schedule.loop;
+      startSequence();
+      Serial.println("Secuencia iniciada por programación");
+    }
+    // Borra la programación al disparar
+    clearSchedule();
+  }
+}
+
 void handleEmergencyState() {
   static bool lastEmergencyState = false;
   bool currentEmergencyState = digitalRead(EMERGENCY_PIN) == HIGH;  // HIGH = presionado
@@ -5914,7 +6088,8 @@ void handleEmergencyState() {
       pcfOutput.digitalWrite(i, HIGH);  // P0 a P3
       ledcWrite(ledPins[i], 0);        // LEDs PWM
     }
-    
+    Serial.println("Secuencias apagadas por Emergencia");
+
     // Detener llenado y aireación si están activos
     fillingActive = false;
     aireacionActive = false;
