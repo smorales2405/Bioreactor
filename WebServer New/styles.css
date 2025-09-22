@@ -1621,3 +1621,55 @@ h1 {
   text-align: center;
   user-select: none;
 }
+
+/* Encabezado con botón a la derecha */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+/* Cuadrícula del modal de lecturas */
+.readings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.readings-grid .reading {
+  background: var(--surface-light);
+  border: 1px solid var(--border-color);
+  padding: 14px;
+  border-radius: 10px;
+  font-size: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.readings-grid .reading label {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Asegura layout del encabezado */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Evita que el botón se estire y fija tamaño razonable */
+.section-header .btn-readings {
+  flex: 0 0 auto;              /* no crecer en el flex */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto !important;      /* sobreescribe width:100% si lo tuviera */
+  min-width: 140px;            /* tamaño fijo mínimo del botón */
+  padding: 8px 14px;
+  white-space: nowrap;         /* que no parta el texto */
+}

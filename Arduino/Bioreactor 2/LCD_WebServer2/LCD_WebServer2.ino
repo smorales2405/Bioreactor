@@ -36,6 +36,7 @@ constexpr int32_t TZ_OFFSET_SEC = -5 * 3600;
 
 // ADC (pH / turbidez / señales analógicas)
 Adafruit_ADS1115 ads;
+bool adsOk = false;
 
 // Termómetro PT100 con MAX31865 (SPI por software)
 Adafruit_MAX31865 thermo = Adafruit_MAX31865(5, 23, 19, 18); // CS, MOSI, MISO, CLK
@@ -474,7 +475,8 @@ void setup() {
   
   // ADS1115
   ads.setGain(GAIN_TWOTHIRDS);
-  if (!ads.begin()) {
+  adsOk = ads.begin();
+  if (!adsOk) {
     Serial.println("Error: No se detectó el ADS1115.");
     lcd.setCursor(10, 2);
     lcd.print("ADC Error!");
@@ -755,9 +757,23 @@ void setupWebServer() {
   // API para sensores
   server.on("/api/sensors", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
-    json += "\"temperature\":" + String(temperature, 1) + ",";
-    json += "\"ph\":" + String(phValue, 2) + ",";
-    json += "\"turbidity\":" + String(turbidityMCmL, 0);
+    json += "\"temperature\":" + jsonNumOrNaN(temperature,   1) + ",";
+    json += "\"ph\":"          + jsonNumOrNaN(phValue,       2) + ",";
+    json += "\"turbidity\":"   + jsonNumOrNaN(turbidityMCmL, 1);
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  // API para Voltajes
+  server.on("/api/sensors/raw", HTTP_GET, [](AsyncWebServerRequest *request){
+    float vT = getTurbidityVoltage(); // A0
+    float vP = getPhVoltage();        // A1
+
+    String json = "{";
+    json += "\"turbidityV\":"    + jsonNumOrNaN(vT,            4) + ",";
+    json += "\"phV\":"           + jsonNumOrNaN(vP,            4) + ",";
+    json += "\"turbidityMCmL\":" + jsonNumOrNaN(turbidityMCmL, 2) + ",";
+    json += "\"phValue\":"       + jsonNumOrNaN(phValue,       2);
     json += "}";
     request->send(200, "application/json", json);
   });
@@ -5130,10 +5146,9 @@ void displayTurbCalibrating() {
 }
 
 float getTurbidityVoltage() {
-  // TODO: Leer del sensor de turbidez conectado al ADC
-  int16_t adc = ads.readADC_SingleEnded(0); // Canal A3 del ADS1115
-  float voltage = ads.computeVolts(adc);
-  return voltage;
+  if (!adsOk) return NAN;
+  int16_t raw = ads.readADC_SingleEnded(0); // A0
+  return ads.computeVolts(raw);
 }
 
 void saveTurbidityMuestra(int muestra) {
@@ -5340,10 +5355,9 @@ void displayPhCalibrating() {
 }
 
 float getPhVoltage() {
-  // Leer del sensor de pH conectado al ADC
-  int16_t adc = ads.readADC_SingleEnded(1); // Canal A1 del ADS1115 para pH
-  float voltage = ads.computeVolts(adc);
-  return voltage;
+  if (!adsOk) return NAN;
+  int16_t raw = ads.readADC_SingleEnded(1); // A1
+  return ads.computeVolts(raw);
 }
 
 void savePhMuestra(int muestra) {
@@ -6062,6 +6076,13 @@ void checkAndRunSchedule() {
     // Borra la programación al disparar
     clearSchedule();
   }
+}
+
+static inline String jsonNumOrNaN(float v, uint8_t decimals) {
+  if (isnan(v) || isinf(v)) return String(F("\"NaN\""));
+  char buf[24];
+  dtostrf(v, 0, decimals, buf);   // ancho 0, 'decimals' decimales
+  return String(buf);
 }
 
 void handleEmergencyState() {

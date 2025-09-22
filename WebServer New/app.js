@@ -60,6 +60,18 @@ let rtcDriftMs = 0;
 let rtcTickTimer = null;
 let rtcResyncTimer = null;
 
+// Helpers para números seguros (aceptan número o "NaN" string)
+function fmt(val, digits) {
+  const n = Number(val);
+  return Number.isFinite(n) ? n.toFixed(digits) : 'NaN';
+}
+function numOrNa(val, fallback = NaN) {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+let readingsTimer = null;
+
 // Inicialización
 document.addEventListener('DOMContentLoaded', function() {
     startRtcClock();
@@ -287,40 +299,42 @@ function initCharts() {
 
 // Actualización de datos de sensores
 async function updateSensorData() {
-   try {
-       const response = await fetch(`/api/sensors`);
-       const data = await response.json();
-       
-       // Actualizar valores en pantalla
-       document.getElementById('tempValue').textContent = data.temperature.toFixed(1);
-       document.getElementById('phValue').textContent = data.ph.toFixed(2);
-       document.getElementById('concValue').textContent = data.turbidity.toFixed(1);
-       
-       // Actualizar gauges
-       updateTempGauge(data.temperature);
-       updatePhIndicator(data.ph);
-       updateConcGauge(data.turbidity);
-       
-       // Agregar datos a histórico
-       const timestamp = new Date().toLocaleTimeString();
-       sensorData.timestamps.push(timestamp);
-       sensorData.temperature.push(data.temperature);
-       sensorData.ph.push(data.ph);
-       
-       // Limitar datos a últimos 20 puntos
-       if (sensorData.timestamps.length > 50) {
-           sensorData.timestamps.shift();
-           sensorData.temperature.shift();
-           sensorData.ph.shift();
-       }
-       
-       // Actualizar gráficos
-       updateCharts();
-       
-   } catch (error) {
-       console.error('Error actualizando sensores:', error);
-       updateConnectionStatus(false);
-   }
+  try {
+    const response = await fetch(`/api/sensors`, { cache: 'no-store' });
+    const data = await response.json();
+
+    const t = numOrNa(data.temperature);
+    const p = numOrNa(data.ph);
+    const c = numOrNa(data.turbidity);
+
+    // Valores visibles
+    document.getElementById('tempValue').textContent = fmt(t, 1);
+    document.getElementById('phValue').textContent = fmt(p, 2);
+    document.getElementById('concValue').textContent = fmt(c, 1);
+
+    // Gauges e indicadores (usa 0/7 como neutro si NaN)
+    updateTempGauge(Number.isFinite(t) ? t : 0);
+    updatePhIndicator(Number.isFinite(p) ? p : 7);
+    updateConcGauge(Number.isFinite(c) ? c : 0);
+
+    // Histórico para gráficos (Chart.js ignora NaN)
+    const timestamp = new Date().toLocaleTimeString();
+    sensorData.timestamps.push(timestamp);
+    sensorData.temperature.push(Number.isFinite(t) ? t : NaN);
+    sensorData.ph.push(Number.isFinite(p) ? p : NaN);
+
+    if (sensorData.timestamps.length > 50) {
+      sensorData.timestamps.shift();
+      sensorData.temperature.shift();
+      sensorData.ph.shift();
+    }
+
+    updateCharts();
+    updateConnectionStatus(true);
+  } catch (error) {
+    console.error('Error actualizando sensores:', error);
+    updateConnectionStatus(false);
+  }
 }
 
 function updateTempGauge(temp) {
@@ -1546,7 +1560,8 @@ async function updatePhStatus() {
             const data = await response.json();
             phLimit = data.phLimit || 7.0;
 
-            document.getElementById('phCurrentLarge').textContent = data.phValue.toFixed(1);
+            const phVal = numOrNa(data.phValue);
+            document.getElementById('phCurrentLarge').textContent = fmt(phVal, 1);
             document.getElementById('phFixedValue').textContent = data.phLimit.toFixed(1);
             
             if (data.autoControl) {
@@ -1776,6 +1791,38 @@ async function startRtcClock() {
 
   clearInterval(rtcResyncTimer);
   rtcResyncTimer = setInterval(resync, 60000); // corrige drift cada 60 s
+}
+
+function openReadingsModal() {
+  document.getElementById('readingsModal').style.display = 'block';
+  updateReadings();
+  readingsTimer = setInterval(updateReadings, 1000);
+}
+
+function closeReadingsModal() {
+  document.getElementById('readingsModal').style.display = 'none';
+  if (readingsTimer) {
+    clearInterval(readingsTimer);
+    readingsTimer = null;
+  }
+}
+
+async function updateReadings() {
+  try {
+    // Nuevo endpoint del ESP32 (ver sección Arduino)
+    const r = await fetch('/api/sensors/raw', { cache: 'no-store' });
+    const d = await r.json();
+
+    document.getElementById('rawTurbV').textContent = fmt(d.turbidityV, 4);
+    document.getElementById('rawPhV').textContent   = fmt(d.phV, 4);
+    document.getElementById('convTurb').textContent = fmt(d.turbidityMCmL, 2);
+    document.getElementById('convPh').textContent   = fmt(d.phValue, 2);
+  } catch (e) {
+    console.error('Error leyendo ADS:', e);
+    ['rawTurbV','rawPhV','convTurb','convPh'].forEach(id => {
+      document.getElementById(id).textContent = 'NaN';
+    });
+  }
 }
 
 function closeModal() {

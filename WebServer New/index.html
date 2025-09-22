@@ -38,7 +38,10 @@
 
         <!-- Sección Sensores -->
         <section id="sensors" class="section active">
-            <h2>Monitoreo de Sensores</h2>
+            <div class="section-header">
+                <h2>Monitoreo de Sensores</h2>
+                <button class="btn btn-secondary btn-small btn-readings" onclick="openReadingsModal()">Ver Lecturas</button>
+            </div>
             
             <div class="sensors-grid">
                 <!-- Temperatura (modificar en la sección de sensores) -->
@@ -630,6 +633,37 @@
             </div>
         </div>
     </div>
+
+    <!-- Modal: Ver Lecturas ADS1115 -->
+    <div id="readingsModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeReadingsModal()">&times;</span>
+            <h2>Lecturas ADS1115 (tiempo real)</h2>
+
+            <div class="readings-grid">
+            <div class="reading">
+                <label>Voltaje Turbidez (A0):</label>
+                <div><span id="rawTurbV">--</span> <span class="unit">V</span></div>
+            </div>
+
+            <div class="reading">
+                <label>Voltaje pH (A1):</label>
+                <div><span id="rawPhV">--</span> <span class="unit">V</span></div>
+            </div>
+
+            <div class="reading">
+                <label>Concentración:</label>
+                <div><span id="convTurb">--</span> <span class="unit">MC/mL</span></div>
+            </div>
+
+            <div class="reading">
+                <label>pH:</label>
+                <div><span id="convPh">--</span></div>
+            </div>
+            </div>
+        </div>
+    </div>
+
 
     <script src="app.js"></script>
 </body>
