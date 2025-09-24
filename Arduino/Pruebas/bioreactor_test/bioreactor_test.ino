@@ -732,7 +732,7 @@ void checkDataLoggingStatus() {
 }
 
 void clearCO2FromEEPROM() {
-  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 1; i++) {
+  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 3; i++) {
     EEPROM.write(i, 0);
   }
   EEPROM.commit();
