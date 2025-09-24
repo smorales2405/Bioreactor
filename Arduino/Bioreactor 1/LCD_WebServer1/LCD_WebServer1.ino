@@ -3506,7 +3506,7 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 2);
   lcd.print(menuCursor == 1 ? "> " : "  ");
   lcd.print("pH: ");
-  if (turbidityMCmL > 0.0) {
+  if (phValue > 0.0) {
     lcd.print(phValue, 2);
     if (phAlarm) {
     lcd.setCursor(15, 2);
