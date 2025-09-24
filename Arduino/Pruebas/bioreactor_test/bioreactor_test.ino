@@ -143,9 +143,8 @@ float calibrationValue = 0.0;
 int   calibrationStep  = 0;
 
 // Calibración Turbidez/Concentración
-float turbMuestra1V = 0.0, turbMuestra1C = 0.0;
-float turbMuestra2V = 0.0, turbMuestra2C = 0.0;
-float turbMuestra3V = 0.0, turbMuestra3C = 0.0;
+float turbMuestra1V = 0.0, turbMuestra2V = 0.0, turbMuestra3V = 0.0;
+int turbMuestra1C = 0.0, turbMuestra2C = 0.0, turbMuestra3C = 0.0;
 float turbCoefA = 0.0, turbCoefB = 0.0, turbCoefC = 0.0;
 int   turbCalibValue = 0;
 int   selectedMuestra = 0;
@@ -155,6 +154,8 @@ int   tempConcentrationValue = 0;
 // Límites de temperatura (edición/visual)
 float tempLimitMin = 18.0;
 float tempLimitMax = 28.0;
+float tempRangeLimitMin = 10.0;
+float tempRangeLimitMax = 40.0;
 float tempEditValue = 0.0;
 bool  editingMin = true;
 
@@ -263,14 +264,14 @@ struct AlarmRecord {
 #define EEPROM_PH_LIMIT_MIN 178 // float
 
 // CO2 (programación/estado)
+#define EEPROM_PH_CONTROL_LIMIT    210
+#define EEPROM_PH_CONTROL_ACTIVE   214
 #define EEPROM_CO2_MINUTES         180  // uint16_t (180–181)
 #define EEPROM_CO2_TIMES           182  // uint16_t (182–183)
 #define EEPROM_CO2_BUCLE           184  // uint8_t
 #define EEPROM_CO2_ACTIVE          185  // uint8_t
 #define EEPROM_CO2_INJECTIONS_DONE 186  // uint16_t (186–187)
 #define EEPROM_CO2_REMAINING_SEC   188  // uint32_t (188–191)
-#define EEPROM_INIT_FLAG           192  // uint8_t
-#define EEPROM_MAGIC_NUMBER        0xAA // constante
 
 // Estado del sistema (LEDs y secuencias)
 #define EEPROM_SEQUENCE_LOOP                  300   // 1 byte
@@ -383,21 +384,15 @@ void setup() {
   
   // Inicializar EEPROM
   EEPROM.begin(512);
+
+  loadLogInterval();
+
   loadTemperatureLimits();
   loadpHLimit();
   loadTurbidityCalibration();
-  loadPhCalibration(); 
+  loadPhCalibration();
+  loadvolumeTotal(); 
   
-  EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
-  if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
-  volumeTotal = 0.0;
-  }
-  
-  EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
-  if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
-    logInterval = 5000; // 5 minutos por defecto
-  }
-
   // Inicializar I2C y LCD
   Wire.begin();
   lcd.init();
@@ -500,9 +495,10 @@ void setup() {
     Serial.println("SD inicializada correctamente");
     lcd.print("SD Card OK");
     
-    // Cargar secuencias desde SD
+    // Cargar desde SD
     loadAllSequences();
-    
+    loadScheduleFromSD();
+    checkDataLoggingStatus();
   }
   
   // Inicializar secuencias en memoria
@@ -517,26 +513,6 @@ void setup() {
         sequences[i].steps[j].hours = 0;
         sequences[i].steps[j].minutes = 0;  
         sequences[i].steps[j].seconds = 0;  
-      }
-    }
-  }
-  
-  // Verificar y reanudar logging si estaba activo
-  for (int i = 0; i < 4; i++) {
-    // Leer flag de logging desde archivo de configuración
-    String configFile = "/config/config_tipo" + String(i + 1) + ".txt";
-    if (SD.exists(configFile)) {
-      File file = SD.open(configFile, FILE_READ);
-      if (file) {
-        String state = file.readStringUntil('\n');
-        state.trim();
-        if (state.equals("LOGGING")) {
-          dataLogging[i] = true;
-          lastLogTime[i] = millis();
-          Serial.print("Reanudando logging Tipo ");
-          Serial.println(i + 1);
-        }
-        file.close();
       }
     }
   }
@@ -576,17 +552,27 @@ void loop() {
   handleButtons();
   
   // Leer sensores periódicamente
-  if (millis() - lastSensorRead > sensorReadInterval) {
-    lastSensorRead = millis();
+  if (rtcInterrupt) {
+
+    rtcInterrupt = false;
+
     readSensors();
     // Verificar alarmas después de leer sensores
     checkAlarms();
 
-    
     // Actualizar display si estamos en el menú de sensores
-    if (currentMenu == MENU_SENSORS) {
+    if (currentMenu == MENU_SENSORS || currentMenu == MENU_PH_SET_MUESTRA || currentMenu == MENU_TURB_SET_VOLTAGE || currentMenu == MENU_TURB_CONFIRM_VOLTAGE || currentMenu == MENU_PH_MANUAL_CO2_ACTIVE) {
       updateDisplay();
     }
+
+    // Si la secuencia está ejecutándose, verificar el tiempo
+    if (sequenceRunning) {
+      checkSequenceProgress();
+      updateDisplay();
+    } else {
+      checkAndRunSchedule();
+    }
+
   }
   
   // Actualizar medición de flujo continuamente
@@ -594,32 +580,30 @@ void loop() {
   updateCO2Time();
   checkPhControl();
   checkDataLogging();
-  
-  // Si la secuencia está ejecutándose, verificar el tiempo
-  if (sequenceRunning && rtcInterrupt) {
-    rtcInterrupt = false;
-    checkSequenceProgress();
-    updateDisplay();
-  }
-
-  if (!sequenceRunning && rtcInterrupt) {
-    rtcInterrupt = false;
-    checkAndRunSchedule();
-  }
-
-  if (currentMenu == MENU_PH_MANUAL_CO2_ACTIVE && millis() - lastSensorRead > 1000) {
-  updateDisplay();
-  }
 
 }
 
-void saveSystemState() {
+void saveSystemStateToEEPROM() {
+  
+  saveLEDsStateToEEPROM();
+  saveLEDsSequenceStateToEEPROM();
+  
+  saveAireationToEEPROM();
+  
+  savepHControlToEEPROM();
+  saveCO2InjectionToEEPROM();
+}
+
+void saveLEDsStateToEEPROM() {
   // Guardar estados de LEDs
   for (int i = 0; i < 4; i++) {
     EEPROM.write(EEPROM_LED_STATES + i, ledStates[i] ? 1 : 0);
     EEPROM.write(EEPROM_LED_PWM + i, pwmValues[i]);
   }
-  
+  EEPROM.commit();
+}
+
+void saveLEDsSequenceStateToEEPROM() {
   // Guardar estado de secuencia
   EEPROM.write(EEPROM_SEQUENCE_LOOP, sequenceLoopMode ? 1 : 0);
   EEPROM.write(EEPROM_SEQUENCE_RUNNING, sequenceRunning ? 1 : 0);
@@ -628,22 +612,37 @@ void saveSystemState() {
   SavedStepStartTime = stepStartTime.unixtime();
   Serial.print("Guardando tiempo de Secuencia: ");
   Serial.println(SavedStepStartTime);
-  EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);
-  
+  EEPROM.put(EEPROM_SEQUENCE_STEP_START_TIME, SavedStepStartTime);  
+  EEPROM.commit();
+}
+
+void saveAireationToEEPROM() {
   // Guardar estados de aireación y CO2
   EEPROM.write(EEPROM_AIREACION, aireacionActive ? 1 : 0);
   EEPROM.write(EEPROM_CO2, co2Active ? 1 : 0);
-  
-  // Guardar estado de inyeccion manual de CO2
-  saveCO2ToEEPROM();
+  EEPROM.commit();
+}
 
+void savepHControlToEEPROM() {
+  EEPROM.put(EEPROM_PH_CONTROL_LIMIT, phLimitSet);
+  EEPROM.write(EEPROM_PH_CONTROL_ACTIVE, phControlActive);
+  EEPROM.commit();
+}
+
+void saveCO2InjectionToEEPROM(){
+  EEPROM.write(EEPROM_CO2_MINUTES, co2MinutesSet);
+  EEPROM.write(EEPROM_CO2_TIMES, co2TimesSet);
+  EEPROM.write(EEPROM_CO2_BUCLE, co2BucleMode ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_ACTIVE, co2InjectionActive ? 1 : 0);
+  EEPROM.write(EEPROM_CO2_INJECTIONS_DONE, co2InjectionsCompleted); 
+  // Guardar tiempo restante (2 bytes)
+  int remainingSeconds = co2MinutesRemaining * 60;
+  EEPROM.put(EEPROM_CO2_REMAINING_SEC, remainingSeconds);
   EEPROM.commit();
 }
 
 void loadSystemState() {
-  
-  loadScheduleFromSD();
-
+    
   // Cargar estado de secuencia
   bool wasSequenceRunning = EEPROM.read(EEPROM_SEQUENCE_RUNNING) == 1;
   if (wasSequenceRunning) {
@@ -694,6 +693,85 @@ void loadSystemState() {
 
   loadCO2FromEEPROM();
 
+}
+
+void loadLogInterval() {
+  EEPROM.get(EEPROM_LOG_INTERVAL, logInterval);
+  if (logInterval == 0 || logInterval > 3600000) { // Máximo 1 hora
+    logInterval = 5000; // 5 minutos por defecto
+  }
+}
+
+void loadvolumeTotal() {
+  EEPROM.get(EEPROM_VOLUME_ADDR, volumeTotal);
+  if (isnan(volumeTotal) || volumeTotal < 0 || volumeTotal > 1000) {
+  volumeTotal = 0.0;
+  }
+}
+
+void checkDataLoggingStatus() {
+  // Verificar y reanudar logging si estaba activo
+  for (int i = 0; i < 4; i++) {
+    // Leer flag de logging desde archivo de configuración
+    String configFile = "/config/config_tipo" + String(i + 1) + ".txt";
+    if (SD.exists(configFile)) {
+      File file = SD.open(configFile, FILE_READ);
+      if (file) {
+        String state = file.readStringUntil('\n');
+        state.trim();
+        if (state.equals("LOGGING")) {
+          dataLogging[i] = true;
+          lastLogTime[i] = millis();
+          Serial.print("Reanudando logging Tipo ");
+          Serial.println(i + 1);
+        }
+        file.close();
+      }
+    }
+  }
+}
+
+void clearCO2FromEEPROM() {
+  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 1; i++) {
+    EEPROM.write(i, 0);
+  }
+  EEPROM.commit();
+}
+
+void loadCO2FromEEPROM() {
+
+  EEPROM.get(EEPROM_PH_CONTROL_LIMIT, phLimitSet);
+  phControlActive = EEPROM.read(EEPROM_PH_CONTROL_ACTIVE) == 1;
+
+  co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
+  co2TimesSet = EEPROM.read(EEPROM_CO2_TIMES);
+  co2TimesPerDay = co2TimesSet;
+  co2BucleMode = EEPROM.read(EEPROM_CO2_BUCLE) == 1;
+  co2InjectionsCompleted = EEPROM.read(EEPROM_CO2_INJECTIONS_DONE);
+  
+  bool wasActive = EEPROM.read(EEPROM_CO2_ACTIVE) == 1;
+  
+  if (wasActive) {
+    // Recuperar tiempo restante
+    int remainingSeconds = 0;
+    EEPROM.get(EEPROM_CO2_REMAINING_SEC, remainingSeconds);
+    co2MinutesRemaining = remainingSeconds / 60;
+    
+    if (co2MinutesRemaining > 0) {
+      // Reanudar inyección
+      co2InjectionActive = true;
+      co2StartTime = millis();
+      //pcfOutput.digitalWrite(P3, LOW);
+      
+      if (co2TimesPerDay > 0) {
+        co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
+        co2ScheduleActive = true;
+        co2NextInjectionTime = millis() + co2IntervalMs;
+      }
+    }
+  }
+  
+  Serial.println("CO2 configuración recuperada de EEPROM");
 }
 
 void setupWiFi() {
@@ -767,7 +845,7 @@ void setupWebServer() {
   });
 
   // API para Voltajes
-  server.on("/api/sensors/raw", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/api/raw_sensors", HTTP_GET, [](AsyncWebServerRequest *request){
     float vT = getTurbidityVoltage(); // A0
     float vP = getPhVoltage();        // A1
 
@@ -777,6 +855,7 @@ void setupWebServer() {
     json += "\"turbidityMCmL\":" + jsonNumOrNaN(turbidityMCmL, 2) + ",";
     json += "\"phValue\":"       + jsonNumOrNaN(phValue,       2);
     json += "}";
+
     request->send(200, "application/json", json);
   });
 
@@ -812,6 +891,23 @@ void setupWebServer() {
     json += "\"min\":" + String(phLimitMin, 1);
     json += "}";
     request->send(200, "application/json", json);
+  });
+
+  // Establecer límite de control de pH
+  server.on("/api/ph/set/control_limit", HTTP_POST, [](AsyncWebServerRequest *request){}, NULL,
+    [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total){
+      if (index + len == total) {
+        DynamicJsonDocument doc(256);
+        DeserializationError error = deserializeJson(doc, data, len);
+        
+        if (!error) {
+          phLimitSet = doc["controlLimit"];
+          savepHControlToEEPROM();
+          request->send(200, "text/plain", "OK");
+        } else {
+          request->send(400, "text/plain", "Invalid JSON");
+        }
+      }
   });
 
   // Establecer límite mínimo de pH
@@ -911,6 +1007,7 @@ void setupWebServer() {
         if (!error) {
           phLimitSet = doc["limit"];
           phControlActive = true;
+          savepHControlToEEPROM();
           request->send(200, "text/plain", "OK");
         } else {
           request->send(400, "text/plain", "Invalid JSON");
@@ -925,6 +1022,7 @@ void setupWebServer() {
       co2Active = false;
       //pcfOutput.digitalWrite(P3, HIGH);
     }
+    savepHControlToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
@@ -959,14 +1057,13 @@ void setupWebServer() {
           }
           
           // Guardar en EEPROM
-          saveCO2ToEEPROM();
+          saveCO2InjectionToEEPROM();
           
           request->send(200, "text/plain", "OK");
         } else {
           request->send(400, "text/plain", "Invalid JSON");
         }
       }
-    saveSystemState();
   });
 
   // Pausar inyección de CO2
@@ -974,7 +1071,7 @@ void setupWebServer() {
     stopCO2Injection();
     co2ScheduleActive = false;
     co2TimesPerDay = 0;
-    saveSystemState();
+    saveCO2InjectionToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
@@ -999,56 +1096,56 @@ void setupWebServer() {
   // Llamado cuando una inyección individual termina
   co2InjectionActive = false;
   //pcfOutput.digitalWrite(P3, HIGH);
-  saveSystemState();
+  saveCO2InjectionToEEPROM();
   request->send(200, "text/plain", "OK");
   });
 
   // Control de LEDs individuales - ON/OFF
   server.on("/led/blanco/on", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(0, true, 100);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/blanco/off", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(0, false, 0);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/rojo/on", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(1, true, 100);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/rojo/off", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(1, false, 0);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/verde/on", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(2, true, 100);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/verde/off", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(2, false, 0);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/azul/on", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(3, true, 100);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/led/azul/off", HTTP_GET, [](AsyncWebServerRequest *request){
     setLED(3, false, 0);
-    saveSystemState();
+    saveLEDsStateToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1058,7 +1155,7 @@ void setupWebServer() {
     int value = path.substring(path.lastIndexOf('/') + 1).toInt();
     if (value >= 0 && value <= 100) {
       setLED(0, value > 0, value);
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid value");
@@ -1070,7 +1167,7 @@ void setupWebServer() {
     int value = path.substring(path.lastIndexOf('/') + 1).toInt();
     if (value >= 0 && value <= 100) {
       setLED(1, value > 0, value);
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid value");
@@ -1082,7 +1179,7 @@ void setupWebServer() {
     int value = path.substring(path.lastIndexOf('/') + 1).toInt();
     if (value >= 0 && value <= 100) {
       setLED(2, value > 0, value);
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid value");
@@ -1094,7 +1191,7 @@ void setupWebServer() {
     int value = path.substring(path.lastIndexOf('/') + 1).toInt();
     if (value >= 0 && value <= 100) {
       setLED(3, value > 0, value);
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       request->send(200, "text/plain", "OK");
     } else {
       request->send(400, "text/plain", "Invalid value");
@@ -1396,14 +1493,14 @@ void setupWebServer() {
   server.on("/api/aireacion/on", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = true;
     //pcfOutput.digitalWrite(P2, LOW);
-    saveSystemState();
+    saveAireationToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/aireacion/off", HTTP_GET, [](AsyncWebServerRequest *request){
     aireacionActive = false;
     //pcfOutput.digitalWrite(P2, HIGH);
-    saveSystemState();
+    saveAireationToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1411,14 +1508,14 @@ void setupWebServer() {
   server.on("/api/co2/on", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = true;
     //pcfOutput.digitalWrite(P3, LOW);
-    saveSystemState();
+    saveAireationToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
   server.on("/api/co2/off", HTTP_GET, [](AsyncWebServerRequest *request){
     co2Active = false;
     //pcfOutput.digitalWrite(P3, HIGH);
-    saveSystemState();
+    saveAireationToEEPROM();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1448,7 +1545,6 @@ void setupWebServer() {
     volumeTotal = 0.0;
     pulseCount = 0;
     saveVolumeToEEPROM();
-    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1478,7 +1574,6 @@ void setupWebServer() {
     volumeLlenado = 0.0;
     targetVolume = 9999;
     //pcfOutput.digitalWrite(P1, LOW);
-    saveSystemState();
     request->send(200, "text/plain", "OK");
   });
 
@@ -1651,6 +1746,12 @@ void handleExtraButton() {
       updateDisplay();
       break;
 
+    case MENU_PH_SET_MUESTRA:
+      currentMenu = MENU_PH_CALIBRATION_MENU;
+      menuCursor = 0;
+      updateDisplay();
+      break;      
+
     //Submenus de Turbidez
     case MENU_TURB_CALIBRATION:
       currentMenu = MENU_SENSOR_TURBIDEZ;
@@ -1659,10 +1760,22 @@ void handleExtraButton() {
       break;
 
     case MENU_TURB_MUESTRA_DETAIL:
-      currentMenu = MENU_SENSOR_TURBIDEZ;
-      menuCursor = 1;
+      currentMenu = MENU_TURB_CALIBRATION;
+      menuCursor = 0;
       updateDisplay();
-      break;    
+      break;
+
+    case MENU_TURB_SET_VOLTAGE:    
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
+
+    case MENU_TURB_SET_CONCENTRATION:    
+      currentMenu = MENU_TURB_MUESTRA_DETAIL;
+      menuCursor = 0;
+      updateDisplay();
+      break;
 
     // Submenús de LEDs
     case MENU_LED_SELECT:
@@ -1875,6 +1988,7 @@ void incrementCursor() {
       break;
 
     case MENU_TURB_SET_CONCENTRATION:
+      tempConcentrationValue = constrain(tempConcentrationValue,0,100);
       if (tempConcentrationValue < 100) tempConcentrationValue++;
       break;
 
@@ -2096,6 +2210,7 @@ void decrementCursor() {
       break;
 
     case MENU_TURB_SET_CONCENTRATION:
+      tempConcentrationValue = constrain(tempConcentrationValue,0,100);
       if (tempConcentrationValue > 0) tempConcentrationValue--;
       break;
 
@@ -2430,6 +2545,7 @@ void handleSelection() {
       phControlActive = true;
       currentMenu = MENU_PH_PANEL;
       menuCursor = 0;
+      savepHControlToEEPROM();
       break;
 
     case MENU_PH_MANUAL_CO2:
@@ -2513,14 +2629,14 @@ void handleSelection() {
       if (menuCursor == 0) {
         // Editar Voltaje
         currentMenu = MENU_TURB_SET_VOLTAGE;
-        tempVoltageReading = getTurbidityVoltage();
       } else if (menuCursor == 1) {
         // Editar Concentración
         currentMenu = MENU_TURB_SET_CONCENTRATION;
+        tempConcentrationValue = 0;
         // Cargar valor actual si existe
-        if (selectedMuestra == 0) tempConcentrationValue = (int)turbMuestra1C;
-        else if (selectedMuestra == 1) tempConcentrationValue = (int)turbMuestra2C;
-        else if (selectedMuestra == 2) tempConcentrationValue = (int)turbMuestra3C;
+        //if (selectedMuestra == 0) tempConcentrationValue = (int)turbMuestra1C;
+        //else if (selectedMuestra == 1) tempConcentrationValue = (int)turbMuestra2C;
+        //else if (selectedMuestra == 2) tempConcentrationValue = (int)turbMuestra3C;
       } else {
         // Atrás
         currentMenu = MENU_TURB_CALIBRATION;
@@ -2561,13 +2677,13 @@ void handleSelection() {
       if (menuCursor == 0) {
         // SI - Guardar concentración
         if (selectedMuestra == 0) {
-          turbMuestra1C = (float)tempConcentrationValue;
+          turbMuestra1C = tempConcentrationValue;
           EEPROM.put(EEPROM_TURB_MUESTRA1_C, turbMuestra1C);
         } else if (selectedMuestra == 1) {
-          turbMuestra2C = (float)tempConcentrationValue;
+          turbMuestra2C = tempConcentrationValue;
           EEPROM.put(EEPROM_TURB_MUESTRA2_C, turbMuestra2C);
         } else if (selectedMuestra == 2) {
-          turbMuestra3C = (float)tempConcentrationValue;
+          turbMuestra3C = tempConcentrationValue;
           EEPROM.put(EEPROM_TURB_MUESTRA3_C, turbMuestra3C);
         }
         EEPROM.commit();
@@ -2636,7 +2752,7 @@ void handleSelection() {
       }
       currentMenu = MENU_ACTION;
       menuCursor = 0;
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       break;
       
     case MENU_INTENSITY:
@@ -2647,7 +2763,7 @@ void handleSelection() {
       Serial.println("Intensidad aplicada a LED");
       currentMenu = MENU_LED_SELECT;
       menuCursor = selectedLed;
-      saveSystemState();
+      saveLEDsStateToEEPROM();
       break;
       
   case MENU_SEQ_LIST:
@@ -2854,13 +2970,11 @@ void handleSelection() {
       currentMenu = MENU_MAIN;
       menuCursor = 2;
     }
-    saveSystemState();
     break;
 
     case MENU_LLENADO_SET_VOLUME:
       currentMenu = MENU_LLENADO_CONFIRM;
       menuCursor = 1; // Por defecto en NO
-      saveSystemState();
       break;
 
     case MENU_LLENADO_CONFIRM:
@@ -2878,7 +2992,6 @@ void handleSelection() {
     case MENU_LLENADO_ACTIVE:
       currentMenu = MENU_LLENADO_STOP_CONFIRM;
       menuCursor = 1;
-      saveSystemState();
       break;
 
     case MENU_LLENADO_STOP_CONFIRM:
@@ -2891,7 +3004,6 @@ void handleSelection() {
         // NO - Continuar
         currentMenu = MENU_LLENADO_ACTIVE;
       }
-      saveSystemState();
       break;
     
     case MENU_LLENADO_RESET_CONFIRM:
@@ -2925,7 +3037,7 @@ void handleSelection() {
         currentMenu = MENU_MAIN;
         menuCursor = 3;
       }
-      saveSystemState();
+      saveAireationToEEPROM();
       break;
 
     case MENU_SEQ_EXECUTION_MODE:
@@ -3001,7 +3113,7 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_MAIN;
       menuCursor = 4;
     }
-    saveSystemState();
+    saveAireationToEEPROM();
     break;
 
   case MENU_POTENCIA:
@@ -3068,7 +3180,6 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 0;
     }
-    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_STOP:
@@ -3082,7 +3193,6 @@ case MENU_SEQ_DELETE_ALL_CONFIRM:
       currentMenu = MENU_ALMACENAR_TYPE;
       menuCursor = 1;
     }
-    saveSystemState();
     break;
 
   case MENU_ALMACENAR_CONFIRM_DELETE:
@@ -3386,10 +3496,10 @@ void displaySensorsMenu() {
   lcd.print(" C");
   
   // Mostrar alerta si está fuera de límites
-  if (temperature < tempLimitMin) {
+  if (temperature < tempLimitMin && temperature >= tempRangeLimitMin) {
     lcd.setCursor(15, 1);
     lcd.print("[BAJ]");
-  } else if (temperature > tempLimitMax) {
+  } else if (temperature > tempLimitMax && temperature <= tempRangeLimitMax) {
     lcd.setCursor(15, 1);
     lcd.print("[ALT]");
   }
@@ -3398,12 +3508,15 @@ void displaySensorsMenu() {
   lcd.setCursor(0, 2);
   lcd.print(menuCursor == 1 ? "> " : "  ");
   lcd.print("pH: ");
-  lcd.print(phValue, 2);
-  
-  if (phAlarm) {
-  lcd.setCursor(14, 2);
-  lcd.print("[ALM]");
-  }
+  if (turbidityMCmL > 0.0) {
+    lcd.print(phValue, 2);
+    if (phAlarm) {
+    lcd.setCursor(15, 2);
+    lcd.print("[ALM]");
+    }
+  } else {
+    lcd.print("Sin Cal");
+  }  
 
   // Turbidez
   lcd.setCursor(0, 3);
@@ -4103,7 +4216,7 @@ void startSequence() {
   Serial.print("Secuencia ");
   Serial.print(selectedSequence + 1);
   Serial.println(" iniciada");
-  saveSystemState();
+  saveLEDsSequenceStateToEEPROM();
 }
 
 void stopSequence() {
@@ -4116,7 +4229,7 @@ void stopSequence() {
   }
   
   Serial.println("Secuencia detenida");
-  saveSystemState();
+  saveLEDsSequenceStateToEEPROM();
 }
 
 void applySequenceStep(int step) {
@@ -4142,7 +4255,7 @@ void applySequenceStep(int step) {
     
   }
   Serial.println();
-  saveSystemState();
+  saveLEDsSequenceStateToEEPROM();
 }
 
 void checkSequenceProgress() {
@@ -4222,10 +4335,10 @@ void loadTemperatureLimits() {
   EEPROM.get(EEPROM_TEMP_MAX, tempLimitMax);
   
   // Validar valores leídos
-  if (isnan(tempLimitMin) || tempLimitMin < 10.0 || tempLimitMin > 30.0) {
+  if (isnan(tempLimitMin) || tempLimitMin < tempRangeLimitMin || tempLimitMin > tempRangeLimitMax) {
     tempLimitMin = 18.0; // Valor por defecto
   }
-  if (isnan(tempLimitMax) || tempLimitMax < 10.0 || tempLimitMax > 30.0) {
+  if (isnan(tempLimitMax) || tempLimitMax < tempRangeLimitMin || tempLimitMax > tempRangeLimitMax) {
     tempLimitMax = 28.0; // Valor por defecto
   }
   
@@ -4371,13 +4484,11 @@ void startFilling() {
   volumeTotal = pulsos / PULSOS_POR_LITRO;
   
   //pcfOutput.digitalWrite(P1, LOW); // Activar bomba
-  saveSystemState();
 }
 
 void stopFilling() {
   fillingActive = false;
   //pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
-  saveSystemState();
 }
 
 void saveVolumeToEEPROM() {
@@ -4803,6 +4914,7 @@ void startCO2Injection() {
   co2MinutesRemaining = co2MinutesSet;
   co2StartTime = millis();
   //pcfOutput.digitalWrite(P3, LOW); // Activar CO2
+  saveCO2InjectionToEEPROM();
 }
 
 void stopCO2Injection() {
@@ -4812,6 +4924,7 @@ void stopCO2Injection() {
     co2Active = false;
     //pcfOutput.digitalWrite(P3, HIGH); // Desactivar CO2
   }
+  saveCO2InjectionToEEPROM();
 }
 
 void startCO2InjectionCycle() {
@@ -4852,63 +4965,6 @@ void checkCO2Schedule() {
       (millis() - co2DailyStartTime) > (24UL * 3600 * 1000)) {
     stopCO2Injection();
     co2ScheduleActive = false;
-  }
-}
-
-void saveCO2ToEEPROM() {
-  EEPROM.write(EEPROM_CO2_MINUTES, co2MinutesSet);
-  EEPROM.write(EEPROM_CO2_TIMES, co2TimesSet);
-  EEPROM.write(EEPROM_CO2_BUCLE, co2BucleMode ? 1 : 0);
-  EEPROM.write(EEPROM_CO2_ACTIVE, co2InjectionActive ? 1 : 0);
-  EEPROM.write(EEPROM_CO2_INJECTIONS_DONE, co2InjectionsCompleted);
-  
-  // Guardar tiempo restante (2 bytes)
-  int remainingSeconds = co2MinutesRemaining * 60;
-  EEPROM.write(EEPROM_CO2_REMAINING_SEC, remainingSeconds & 0xFF);
-  EEPROM.write(EEPROM_CO2_REMAINING_SEC + 1, (remainingSeconds >> 8) & 0xFF);
-  
-  EEPROM.write(EEPROM_INIT_FLAG, EEPROM_MAGIC_NUMBER);
-  EEPROM.commit();
-}
-
-void clearCO2FromEEPROM() {
-  for (int i = EEPROM_CO2_MINUTES; i <= EEPROM_CO2_REMAINING_SEC + 1; i++) {
-    EEPROM.write(i, 0);
-  }
-  EEPROM.commit();
-}
-
-void loadCO2FromEEPROM() {
-  if (EEPROM.read(EEPROM_INIT_FLAG) == EEPROM_MAGIC_NUMBER) {
-    co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
-    co2TimesSet = EEPROM.read(EEPROM_CO2_TIMES);
-    co2TimesPerDay = co2TimesSet;
-    co2BucleMode = EEPROM.read(EEPROM_CO2_BUCLE) == 1;
-    co2InjectionsCompleted = EEPROM.read(EEPROM_CO2_INJECTIONS_DONE);
-    
-    bool wasActive = EEPROM.read(EEPROM_CO2_ACTIVE) == 1;
-    
-    if (wasActive) {
-      // Recuperar tiempo restante
-      int remainingSeconds = EEPROM.read(EEPROM_CO2_REMAINING_SEC) | 
-                           (EEPROM.read(EEPROM_CO2_REMAINING_SEC + 1) << 8);
-      co2MinutesRemaining = remainingSeconds / 60;
-      
-      if (co2MinutesRemaining > 0) {
-        // Reanudar inyección
-        co2InjectionActive = true;
-        co2StartTime = millis();
-        //pcfOutput.digitalWrite(P3, LOW);
-        
-        if (co2TimesPerDay > 0) {
-          co2IntervalMs = (24UL * 3600 * 1000) / co2TimesPerDay;
-          co2ScheduleActive = true;
-          co2NextInjectionTime = millis() + co2IntervalMs;
-        }
-      }
-    }
-    
-    Serial.println("CO2 configuración recuperada de EEPROM");
   }
 }
 
@@ -5150,7 +5206,10 @@ void displayTurbCalibrating() {
 float getTurbidityVoltage() {
   if (!adsOk) return NAN;
   int16_t raw = ads.readADC_SingleEnded(0); // A0
-  return ads.computeVolts(raw);
+  float voltage = ads.computeVolts(raw);
+  //Serial.print("Voltaje (Concentracion): ");
+  //Serial.println(voltage);
+  return voltage;
 }
 
 void saveTurbidityMuestra(int muestra) {
@@ -5359,7 +5418,10 @@ void displayPhCalibrating() {
 float getPhVoltage() {
   if (!adsOk) return NAN;
   int16_t raw = ads.readADC_SingleEnded(1); // A1
-  return ads.computeVolts(raw);
+  float voltage = ads.computeVolts(raw);
+  //Serial.print("Voltaje (pH): ");
+  //Serial.println(voltage);  
+  return voltage;
 }
 
 void savePhMuestra(int muestra) {
@@ -5783,6 +5845,7 @@ void displayTurbSetVoltage() {
   }
   
   // Valor actual
+  tempVoltageReading = getTurbidityVoltage();
   lcd.setCursor(0, 2);
   lcd.print("Actual: ");
   lcd.print(tempVoltageReading, 3);
@@ -5803,6 +5866,7 @@ void displayTurbConfirmVoltage() {
   
   lcd.setCursor(0, 2);
   lcd.print("V: ");
+  tempVoltageReading = getTurbidityVoltage();
   lcd.print(tempVoltageReading, 3);
   lcd.print("V");
   
@@ -5889,7 +5953,7 @@ void checkAlarms() {
   
   // Verificar alarma de temperatura
   tempAlarm = false;
-  if (temperature >= 10.0 && temperature <= 40.0) {
+  if (temperature >= tempRangeLimitMin && temperature <= tempRangeLimitMax) {
     if (temperature < tempLimitMin || temperature > tempLimitMax) {
       // Solo activar si:
       // 1. No fue silenciada, O
@@ -5922,7 +5986,7 @@ void checkAlarms() {
   
   // Verificar alarma de pH
   phAlarm = false;
-  if (!co2Active && !co2InjectionActive && phValue < phLimitMin) {
+  if (!co2Active && !co2InjectionActive && (phValue < phLimitMin && phValue > 0.0)) {
     // Solo activar si:
     // 1. No fue silenciada, O
     // 2. Fue silenciada PERO el sensor volvió a normal y luego salió de límites nuevamente

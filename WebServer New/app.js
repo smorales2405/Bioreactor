@@ -1278,6 +1278,7 @@ function updatePhControlDisplay() {
 function adjustPhLimit(delta) {
     phLimit = Math.max(0, Math.min(14, phLimit + delta));
     document.getElementById('phLimitInput').value = phLimit.toFixed(1);
+    savePhLimitSet();
     updatePhControlDisplay();
 }
 
@@ -1642,6 +1643,22 @@ function updatePhLimitPreview() {
     document.getElementById('phCurrentPreview').textContent = currentPh.toFixed(1);
 }
 
+async function savePhLimitSet() {
+    phLimit = parseFloat(document.getElementById('phLimitInput').value);
+    
+    try {
+        await fetch('/api/ph/set/control_limit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ min: phLimit })
+        });
+        showNotification('Límite de pH Fijado guardado', 'success');
+    } catch (error) {
+        console.error('Error guardando pH Fijado:', error);
+        showNotification('Error al guardar pH Fijado', 'error');
+    }
+}
+
 // Guardar límite de pH
 async function savePhLimit() {
     phLimitMin = parseFloat(document.getElementById('phMinInput').value);
@@ -1810,7 +1827,7 @@ function closeReadingsModal() {
 async function updateReadings() {
   try {
     // Nuevo endpoint del ESP32 (ver sección Arduino)
-    const r = await fetch('/api/sensors/raw', { cache: 'no-store' });
+    const r = await fetch('/api/raw_sensors', { cache: 'no-store' });
     const d = await r.json();
 
     document.getElementById('rawTurbV').textContent = fmt(d.turbidityV, 4);
