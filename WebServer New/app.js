@@ -1154,12 +1154,14 @@ async function updateFillingStatus() {
         const pumpIndicator = document.getElementById('pumpIndicator');
         const pumpStatus = document.getElementById('pumpStatus');
         
+        const manualStatsBlock  = document.getElementById('manualStatsBlock');
+        const pulseCountUI      = document.getElementById('pulseCountUI');
+        const manualVolumeUI    = document.getElementById('manualVolumeUI');
+
         if (data.fillingActive) {
             fillingActive = true;
             pumpIndicator.classList.add('active');
             pumpStatus.textContent = 'Bomba ENCENDIDA';
-            
-            const manualStats = document.getElementById('manualStats');
 
             if (!data.isManualMode) {
                 fillingStatusText.textContent = 'Llenando...';
@@ -1180,12 +1182,12 @@ async function updateFillingStatus() {
                 document.getElementById('startFillBtn').style.display = 'inline-block';
                 document.getElementById('stopFillBtn').style.display = 'none';
 
-                if (manualStats) {
-                manualStats.style.display = 'inline';
-                document.getElementById('pulseCountUI').textContent   = Number(data.pulsos || 0);
-                document.getElementById('manualVolumeUI').textContent = (Number(data.volumeLlenado) || 0).toFixed(1);
+                if (manualStatsBlock) {
+                manualStatsBlock.style.display = 'block';
+                if (pulseCountUI)   pulseCountUI.textContent   = `Pulsos: ${Number(data.pulsos || 0)}`;
+                if (manualVolumeUI) manualVolumeUI.textContent =
+                    `Llenado: ${Number(data.volumeLlenado || 0).toFixed(1)} L`;
                 }
-
             }
         } else {
             fillingActive = false;
@@ -1194,8 +1196,7 @@ async function updateFillingStatus() {
             fillingStatusText.textContent = 'Inactivo';
             fillingProgress.style.display = 'none';
 
-            const manualStats = document.getElementById('manualStats');
-            if (manualStats) manualStats.style.display = 'none';
+            if (manualStatsBlock) manualStatsBlock.style.display = 'none';
         }
     } catch (error) {
         console.error('Error obteniendo estado de llenado:', error);

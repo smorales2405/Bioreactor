@@ -1674,15 +1674,21 @@ h1 {
   white-space: nowrap;         /* que no parta el texto */
 }
 
-.filling-status .status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between; /* texto a la izq., stats a la der. */
-  gap: 12px;
+/* Línea de estado: texto continuo */
+.filling-status .status-line {
+  margin: 0 0 6px 0;
+  font-size: 18px;           /* acorde al resto de la tarjeta */
+  color: var(--text-primary);
 }
 
-.manual-stats {
-  color: var(--text-secondary);
-  font-size: 16px;
-  font-weight: 500;
+/* Bloque de estadísticas manuales, en dos líneas, bien visibles */
+.manual-stats-block {
+  margin-top: 4px;
+}
+
+.manual-stat-line {
+  font-size: 22px;           /* más grande para mejor lectura */
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-primary);
 }

@@ -163,6 +163,7 @@ bool  editingMin = true;
 #define FLOW_SENSOR_PIN 36
 #define PULSOS_POR_LITRO 10
 volatile uint32_t pulseCount = 0;
+uint32_t pulsos = 0;
 float volumeTotal   = 0.0;
 float volumeLlenado = 0.0;
 float targetVolume  = 0.0;
@@ -1534,6 +1535,7 @@ void setupWebServer() {
   server.on("/api/llenado/status", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
     json += "\"volumeTotal\":" + String(volumeTotal, 1) + ",";
+    json += "\"pulsos\":" + String(pulsos) + ",";
     json += "\"volumeLlenado\":" + String(volumeLlenado, 1) + ",";
     json += "\"targetVolume\":" + String(targetVolume, 0) + ",";
     json += "\"fillingActive\":" + String(fillingActive ? "true" : "false") + ",";
@@ -1572,10 +1574,8 @@ void setupWebServer() {
 
   // Iniciar bomba manual
   server.on("/api/llenado/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){
-    fillingActive = true;
-    volumeLlenado = 0.0;
     targetVolume = 9999;
-    pcfOutput.digitalWrite(P1, LOW);
+    startFilling();
     request->send(200, "text/plain", "OK");
   });
 
@@ -2958,11 +2958,8 @@ void handleSelection() {
       // Encender/Apagar bomba manual
       if (!fillingActive) {
         // Encender bomba sin límite
-        fillingActive = true;
-        pulseCount = 0;
-        volumeLlenado = 0.0;
         targetVolume = 9999; // Valor alto para que no se detenga
-        pcfOutput.digitalWrite(P1, LOW);
+        startFilling();
         currentMenu = MENU_LLENADO_ACTIVE;
       } else {
         // Si ya está activa, ir a pantalla de control
@@ -4505,7 +4502,7 @@ void updateFlowMeasurement() {
 
   // Lectura atómica de pulsos acumulados
   noInterrupts();
-  uint32_t pulsos = pulseCount;
+  pulsos = pulseCount;
   interrupts();
 
   // Si la bomba está APAGADA: no acumulamos nada y

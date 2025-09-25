@@ -427,13 +427,13 @@
                     
                     <!-- Estado de llenado -->
                     <div class="filling-status" id="fillingStatus">
-                    <p class="status-row">
-                        Estado: <span id="fillingStatusText">Inactivo</span>
-                        <span id="manualStats" class="manual-stats" style="display:none;">
-                        | Pulsos: <span id="pulseCountUI">0</span>
-                        &nbsp;•&nbsp; Llenado: <span id="manualVolumeUI">0.0</span> L
-                        </span>
-                    </p>
+                    <p class="status-line">Estado: <span id="fillingStatusText">Inactivo</span></p>
+
+                    <!-- Estadísticas de modo manual (se muestran solo con bomba manual activa) -->
+                    <div id="manualStatsBlock" class="manual-stats-block" style="display:none;">
+                        <div class="manual-stat-line" id="pulseCountUI">Pulsos: 0</div>
+                        <div class="manual-stat-line" id="manualVolumeUI">Llenado: 0.0 L</div>
+                    </div>
 
                     <div id="fillingProgress" style="display:none;">
                         <p>Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
@@ -442,6 +442,7 @@
                         </div>
                     </div>
                     </div>
+
                     
                     <!-- Control automático -->
                     <div class="auto-fill">
