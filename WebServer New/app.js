@@ -1154,7 +1154,7 @@ async function updateFillingStatus() {
         const pumpIndicator = document.getElementById('pumpIndicator');
         const pumpStatus = document.getElementById('pumpStatus');
         
-        const manualStatsBlock  = document.getElementById('manualStatsBlock');
+        const manualStatsInline = document.getElementById('manualStatsInline');
         const pulseCountUI      = document.getElementById('pulseCountUI');
         const manualVolumeUI    = document.getElementById('manualVolumeUI');
 
@@ -1175,18 +1175,19 @@ async function updateFillingStatus() {
                 const progress = (data.volumeLlenado / data.targetVolume) * 100;
                 document.getElementById('progressFill').style.width = progress + '%';
             
-                if (manualStats) manualStats.style.display = 'none';
+                if (manualStatsInline) manualStatsInline.style.display = 'none';
             } else {
-                fillingStatusText.textContent = 'Bomba Manual Activa';
+                fillingStatusText.textContent = 'Bomba Activa';
                 fillingProgress.style.display = 'none';
                 document.getElementById('startFillBtn').style.display = 'inline-block';
                 document.getElementById('stopFillBtn').style.display = 'none';
 
-                if (manualStatsBlock) {
-                manualStatsBlock.style.display = 'block';
-                if (pulseCountUI)   pulseCountUI.textContent   = `Pulsos: ${Number(data.pulsos || 0)}`;
-                if (manualVolumeUI) manualVolumeUI.textContent =
-                    `Llenado: ${Number(data.volumeLlenado || 0).toFixed(1)} L`;
+                if (manualStatsInline) {
+                    manualStatsInline.style.display = 'inline-flex';
+                    const pulses = Number(data.pulsos || 0);
+                    const llenado = Number(data.volumeLlenado || 0);
+                    pulseCountUI.textContent   = pulses;             // solo el número (sin negrita)
+                    manualVolumeUI.textContent = llenado.toFixed(1); // solo el número (sin negrita)
                 }
             }
         } else {
@@ -1196,7 +1197,7 @@ async function updateFillingStatus() {
             fillingStatusText.textContent = 'Inactivo';
             fillingProgress.style.display = 'none';
 
-            if (manualStatsBlock) manualStatsBlock.style.display = 'none';
+            if (manualStatsInline) manualStatsInline.style.display = 'none';
         }
     } catch (error) {
         console.error('Error obteniendo estado de llenado:', error);

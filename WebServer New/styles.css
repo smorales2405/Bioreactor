@@ -1674,21 +1674,33 @@ h1 {
   white-space: nowrap;         /* que no parta el texto */
 }
 
-/* Línea de estado: texto continuo */
+/* Línea de estado: todo en una sola fila */
 .filling-status .status-line {
   margin: 0 0 6px 0;
-  font-size: 18px;           /* acorde al resto de la tarjeta */
+  font-size: 18px;
   color: var(--text-primary);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;          /* por si en móvil no entra todo */
 }
 
-/* Bloque de estadísticas manuales, en dos líneas, bien visibles */
-.manual-stats-block {
-  margin-top: 4px;
+/* Stats a la derecha del estado */
+.manual-stats-inline {
+  display: inline-flex;     /* se muestra/oculta desde JS */
+  align-items: baseline;
+  gap: 12px;                /* espacio entre “Pulsos” y “Llenado” */
+  font-size: 18px;          /* sube/baja a gusto (20–22 para más grande) */
 }
 
-.manual-stat-line {
-  font-size: 22px;           /* más grande para mejor lectura */
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--text-primary);
+/* Separador vertical “|” */
+.manual-stats-inline .sep {
+  opacity: .7;
+  padding: 0 4px;
 }
+
+/* Etiquetas en negrita, valores NO en negrita */
+.manual-stats-inline .stat-label { font-weight: 700; }
+.manual-stats-inline .stat-value,
+.manual-stats-inline .stat-unit { font-weight: 400; }
+

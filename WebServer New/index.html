@@ -427,23 +427,32 @@
                     
                     <!-- Estado de llenado -->
                     <div class="filling-status" id="fillingStatus">
-                    <p class="status-line">Estado: <span id="fillingStatusText">Inactivo</span></p>
+                    <p class="status-line">
+                        Estado: <span id="fillingStatusText">Inactivo</span>
 
-                    <!-- Estadísticas de modo manual (se muestran solo con bomba manual activa) -->
-                    <div id="manualStatsBlock" class="manual-stats-block" style="display:none;">
-                        <div class="manual-stat-line" id="pulseCountUI">Pulsos: 0</div>
-                        <div class="manual-stat-line" id="manualVolumeUI">Llenado: 0.0 L</div>
-                    </div>
+                        <!-- NUEVO: stats en línea a la derecha del estado -->
+                        <span id="manualStatsInline" class="manual-stats-inline" style="display:none;">
+                        <span class="sep">|</span>
+                        <span class="stat">
+                            <span class="stat-label">Pulsos:</span>
+                            <span class="stat-value" id="pulseCountUI">0</span>
+                        </span>
+                        <span class="stat">
+                            <span class="stat-label">Volumen Llenado:</span>
+                            <span class="stat-value" id="manualVolumeUI">0.0</span>
+                            <span class="stat-unit">L</span>
+                        </span>
+                        </span>
+                    </p>
 
                     <div id="fillingProgress" style="display:none;">
-                        <p>Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
+                        <p>Volumen Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
                         <div class="progress-bar">
                         <div class="progress-fill" id="progressFill"></div>
                         </div>
                     </div>
                     </div>
 
-                    
                     <!-- Control automático -->
                     <div class="auto-fill">
                         <h4>Llenado Automático</h4>
