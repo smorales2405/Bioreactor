@@ -427,13 +427,20 @@
                     
                     <!-- Estado de llenado -->
                     <div class="filling-status" id="fillingStatus">
-                        <p>Estado: <span id="fillingStatusText">Inactivo</span></p>
-                        <div id="fillingProgress" style="display:none;">
-                            <p>Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
-                            <div class="progress-bar">
-                                <div class="progress-fill" id="progressFill"></div>
-                            </div>
+                    <p class="status-row">
+                        Estado: <span id="fillingStatusText">Inactivo</span>
+                        <span id="manualStats" class="manual-stats" style="display:none;">
+                        | Pulsos: <span id="pulseCountUI">0</span>
+                        &nbsp;•&nbsp; Llenado: <span id="manualVolumeUI">0.0</span> L
+                        </span>
+                    </p>
+
+                    <div id="fillingProgress" style="display:none;">
+                        <p>Llenado: <span id="fillingVolume">0.0</span> / <span id="targetVolume">0.0</span> L</p>
+                        <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
                         </div>
+                    </div>
                     </div>
                     
                     <!-- Control automático -->

@@ -1673,3 +1673,16 @@ h1 {
   padding: 8px 14px;
   white-space: nowrap;         /* que no parta el texto */
 }
+
+.filling-status .status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between; /* texto a la izq., stats a la der. */
+  gap: 12px;
+}
+
+.manual-stats {
+  color: var(--text-secondary);
+  font-size: 16px;
+  font-weight: 500;
+}

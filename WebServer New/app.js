@@ -1159,6 +1159,8 @@ async function updateFillingStatus() {
             pumpIndicator.classList.add('active');
             pumpStatus.textContent = 'Bomba ENCENDIDA';
             
+            const manualStats = document.getElementById('manualStats');
+
             if (!data.isManualMode) {
                 fillingStatusText.textContent = 'Llenando...';
                 fillingProgress.style.display = 'block';
@@ -1168,14 +1170,22 @@ async function updateFillingStatus() {
                 document.getElementById('startFillBtn').style.display = 'none';
                 document.getElementById('stopFillBtn').style.display = 'inline-block';
 
-
                 const progress = (data.volumeLlenado / data.targetVolume) * 100;
                 document.getElementById('progressFill').style.width = progress + '%';
+            
+                if (manualStats) manualStats.style.display = 'none';
             } else {
                 fillingStatusText.textContent = 'Bomba Manual Activa';
                 fillingProgress.style.display = 'none';
                 document.getElementById('startFillBtn').style.display = 'inline-block';
                 document.getElementById('stopFillBtn').style.display = 'none';
+
+                if (manualStats) {
+                manualStats.style.display = 'inline';
+                document.getElementById('pulseCountUI').textContent   = Number(data.pulsos || 0);
+                document.getElementById('manualVolumeUI').textContent = (Number(data.volumeLlenado) || 0).toFixed(1);
+                }
+
             }
         } else {
             fillingActive = false;
@@ -1183,6 +1193,9 @@ async function updateFillingStatus() {
             pumpStatus.textContent = 'Bomba APAGADA';
             fillingStatusText.textContent = 'Inactivo';
             fillingProgress.style.display = 'none';
+
+            const manualStats = document.getElementById('manualStats');
+            if (manualStats) manualStats.style.display = 'none';
         }
     } catch (error) {
         console.error('Error obteniendo estado de llenado:', error);
