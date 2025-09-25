@@ -1650,7 +1650,7 @@ async function savePhLimitSet() {
         await fetch('/api/ph/set/control_limit', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ min: phLimit })
+            body: JSON.stringify({ controlLimit: phLimit })
         });
         showNotification('Límite de pH Fijado guardado', 'success');
     } catch (error) {

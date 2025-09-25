@@ -741,6 +741,9 @@ void clearCO2FromEEPROM() {
 void loadCO2FromEEPROM() {
 
   EEPROM.get(EEPROM_PH_CONTROL_LIMIT, phLimitSet);
+  if (phLimitSet <= 0.0 || phLimitSet > 14.0) { 
+  phLimitSet = 7.0; //
+  }
   phControlActive = EEPROM.read(EEPROM_PH_CONTROL_ACTIVE) == 1;
 
   co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
