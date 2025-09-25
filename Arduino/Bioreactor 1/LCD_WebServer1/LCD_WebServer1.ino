@@ -161,8 +161,9 @@ bool  editingMin = true;
 
 // Flujómetro (volumen/llenado)
 #define FLOW_SENSOR_PIN 36
-#define PULSOS_POR_LITRO 450
-volatile unsigned long pulseCount = 0;
+#define PULSOS_POR_LITRO 10
+volatile uint32_t pulseCount = 0;
+uint32_t pulsos = 0;
 float volumeTotal   = 0.0;
 float volumeLlenado = 0.0;
 float targetVolume  = 0.0;
@@ -372,6 +373,7 @@ void IRAM_ATTR onRTCInterrupt() {
 // Función de interrupción para el sensor de flujo
 void IRAM_ATTR contarPulso() {
   pulseCount++;
+  Serial.println("Interrupcion Flujometro");
 }
 
 void IRAM_ATTR handleEmergency() {
@@ -739,6 +741,9 @@ void clearCO2FromEEPROM() {
 void loadCO2FromEEPROM() {
 
   EEPROM.get(EEPROM_PH_CONTROL_LIMIT, phLimitSet);
+  if (phLimitSet <= 0.0 || phLimitSet > 14.0) { 
+  phLimitSet = 7.0; //
+  }
   phControlActive = EEPROM.read(EEPROM_PH_CONTROL_ACTIVE) == 1;
 
   co2MinutesSet = EEPROM.read(EEPROM_CO2_MINUTES);
@@ -1530,6 +1535,7 @@ void setupWebServer() {
   server.on("/api/llenado/status", HTTP_GET, [](AsyncWebServerRequest *request){
     String json = "{";
     json += "\"volumeTotal\":" + String(volumeTotal, 1) + ",";
+    json += "\"pulsos\":" + String(pulsos) + ",";
     json += "\"volumeLlenado\":" + String(volumeLlenado, 1) + ",";
     json += "\"targetVolume\":" + String(targetVolume, 0) + ",";
     json += "\"fillingActive\":" + String(fillingActive ? "true" : "false") + ",";
@@ -1568,10 +1574,8 @@ void setupWebServer() {
 
   // Iniciar bomba manual
   server.on("/api/llenado/manual/start", HTTP_POST, [](AsyncWebServerRequest *request){
-    fillingActive = true;
-    volumeLlenado = 0.0;
     targetVolume = 9999;
-    pcfOutput.digitalWrite(P1, LOW);
+    startFilling();
     request->send(200, "text/plain", "OK");
   });
 
@@ -2954,10 +2958,8 @@ void handleSelection() {
       // Encender/Apagar bomba manual
       if (!fillingActive) {
         // Encender bomba sin límite
-        fillingActive = true;
-        volumeLlenado = 0.0;
         targetVolume = 9999; // Valor alto para que no se detenga
-        pcfOutput.digitalWrite(P1, LOW);
+        startFilling();
         currentMenu = MENU_LLENADO_ACTIVE;
       } else {
         // Si ya está activa, ir a pantalla de control
@@ -4475,18 +4477,14 @@ void startFilling() {
 
   fillingActive = true;
   volumeLlenado = 0.0;
-  // Guardar el volumen actual como referencia
-  noInterrupts();
-  unsigned long pulsos = pulseCount;
-  interrupts();
-  volumeTotal = pulsos / PULSOS_POR_LITRO;
-  
+  pulseCount = 0;
   pcfOutput.digitalWrite(P1, LOW); // Activar bomba
 }
 
 void stopFilling() {
   fillingActive = false;
   pcfOutput.digitalWrite(P1, HIGH); // Desactivar bomba
+  saveVolumeToEEPROM();
 }
 
 void saveVolumeToEEPROM() {
@@ -4495,42 +4493,73 @@ void saveVolumeToEEPROM() {
 }
 
 void updateFlowMeasurement() {
-  if (millis() - lastFlowCheck >= 500) {
-    lastFlowCheck = millis();
-    
-    noInterrupts();
-    unsigned long pulsos = pulseCount;
-    interrupts();
-    
-    float litrosActuales = pulsos / PULSOS_POR_LITRO;
-    
-    if (fillingActive) {
-      // Calcular litros llenados desde que empezó el llenado
-      volumeLlenado = litrosActuales - volumeTotal;
-      
-      // Solo detener si hay un límite establecido (no en modo manual)
-      if (targetVolume < 9999 && volumeLlenado >= targetVolume) {
-        stopFilling();
-        currentMenu = MENU_LLENADO;
-        menuCursor = 0;
-      }
-    } else {
-      volumeTotal = litrosActuales;
-    }
-    
-    // Actualizar display si estamos en menú llenado o llenado activo
-    if (currentMenu == MENU_LLENADO || currentMenu == MENU_LLENADO_ACTIVE) {
-      updateDisplay();
-    }
-    
-    // Guardar cada 5 segundos
-    static unsigned long lastSave = 0;
-    if (millis() - lastSave > 5000) {
-      lastSave = millis();
-      saveVolumeToEEPROM();
-    }
+  static unsigned long prevPulses = 0;   // línea base para calcular delta
+  static bool prevFilling = false;       // detectar flanco de encendido de bomba
+  static unsigned long lastSave = 0;     // guardar EEPROM cada 5 s
+
+  if (millis() - lastFlowCheck < 500) return;   // muestreo cada 500 ms
+  lastFlowCheck = millis();
+
+  // Lectura atómica de pulsos acumulados
+  noInterrupts();
+  pulsos = pulseCount;
+  interrupts();
+
+  // Si la bomba está APAGADA: no acumulamos nada y
+  // reiniciamos la línea base para ignorar pulsos ocurridos en apagado
+  if (!fillingActive) {
+    prevFilling = false;
+    prevPulses  = pulsos;   // descarta pulsos fuera de llenado
+    // (opcional) dejar volumeLlenado como quedó para mostrar el último resultado
+    // o ponerlo en 0 si prefieres: volumeLlenado = 0.0;
+    return;
   }
+
+  // Flanco de encendido de bomba: nueva sesión de llenado
+  if (!prevFilling) {
+    prevFilling   = true;
+    prevPulses    = pulsos;   // línea base de esta sesión
+    volumeLlenado = 0.0;      // acumulado de la sesión
+  }
+
+  // Delta de pulsos desde la última lectura (manejo de wrap-around)
+  uint32_t deltaPulses = pulsos - prevPulses;
+  prevPulses = pulsos;
+
+  // Convertir a litros y acumular
+  if (deltaPulses > 0) {
+    const float litrosDelta = (float)deltaPulses / PULSOS_POR_LITRO;
+    volumeLlenado += litrosDelta;   // volumen de esta sesión
+    volumeTotal   += litrosDelta;   // volumen total del tanque
+  }
+
+  // Llenado automático: detener al alcanzar la meta (9999 = modo manual)
+  if (targetVolume < 9999 && volumeLlenado >= targetVolume) {
+    stopFilling();
+    currentMenu = MENU_LLENADO;
+    menuCursor = 0;
+  }
+
+  // Actualizar LCD si corresponde
+  if (currentMenu == MENU_LLENADO || currentMenu == MENU_LLENADO_ACTIVE) {
+    updateDisplay();
+  }
+
+  // Guardar cada 5 s
+  if (millis() - lastSave > 5000) {
+    lastSave = millis();
+    saveVolumeToEEPROM();
+  }
+
+  // Debug (fuera de la ISR)
+  Serial.print("Pulsos: ");
+  Serial.print(pulsos);
+  Serial.print(" | Llenado (sesión): ");
+  Serial.print(volumeLlenado, 3);
+  Serial.print(" L | Total: ");
+  Serial.println(volumeTotal, 1);
 }
+
 
 void displayLlenadoMenu() {
   lcd.clear();
@@ -4539,7 +4568,7 @@ void displayLlenadoMenu() {
   
   lcd.setCursor(0, 1);
   lcd.print("Volumen: ");
-  lcd.print(volumeTotal, 0);
+  lcd.print(volumeTotal, 1);
   lcd.print(" L");
   
   // Lógica de scroll corregida para 4 opciones en 2 líneas
@@ -4635,7 +4664,7 @@ void displayFillingActive() {
   
   lcd.setCursor(0, 2);
   lcd.print("Total: ");
-  lcd.print(volumeTotal + volumeLlenado, 1);
+  lcd.print(volumeTotal, 1);
   lcd.print(" L");
   
   lcd.setCursor(0, 3);
@@ -4659,7 +4688,7 @@ void displayStopConfirm() {
   
   lcd.setCursor(0, 1);
   lcd.print("Llenados: ");
-  lcd.print(volumeLlenado, 0);
+  lcd.print(volumeLlenado, 1);
   lcd.print(" L");
   
   lcd.setCursor(0, 2);
